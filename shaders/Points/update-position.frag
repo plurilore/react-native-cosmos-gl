@@ -1,0 +1,60 @@
+#version 300 es
+#ifdef GL_ES
+precision highp float;
+#endif
+
+uniform sampler2D positionsTexture;
+uniform sampler2D velocity;
+uniform sampler2D pinnedStatusTexture;
+uniform sampler2D exitTexture;
+
+#ifdef USE_UNIFORM_BUFFERS
+layout(std140) uniform updatePositionUniforms {
+  float friction;
+  float spaceSize;
+} updatePosition;
+
+#define friction updatePosition.friction
+#define spaceSize updatePosition.spaceSize
+#else
+uniform float friction;
+uniform float spaceSize;
+#endif
+
+out vec4 fragColor;
+
+void main() {
+  ivec2 pointTexel = ivec2(gl_FragCoord.xy);
+
+  vec4 pointPosition = texelFetch(positionsTexture, pointTexel, 0);
+  vec4 pointVelocity = texelFetch(velocity, pointTexel, 0);
+
+  // Check if point is pinned
+  // pinnedStatusTexture has the same size and layout as positionsTexture
+  // Each pixel corresponds to a point: red channel > 0.5 means the point is pinned
+  vec4 pinnedStatus = texelFetch(pinnedStatusTexture, pointTexel, 0);
+  
+  // If pinned, don't update position
+  if (pinnedStatus.r > 0.5) {
+    fragColor = pointPosition;
+    return;
+  }
+
+  // If absent (current absence = exit.G), leave it untouched — don't integrate or
+  // clamp it (clamping NaN is undefined and could resurrect the point at (0,0)).
+  vec4 exitStatus = texelFetch(exitTexture, pointTexel, 0);
+  if (exitStatus.g > 0.5) {
+    fragColor = pointPosition;
+    return;
+  }
+
+  // Friction
+  pointVelocity.rg *= friction;
+
+  pointPosition.rg += pointVelocity.rg;
+
+  pointPosition.r = clamp(pointPosition.r, 0.0, spaceSize);
+  pointPosition.g = clamp(pointPosition.g, 0.0, spaceSize);
+  
+  fragColor = pointPosition;
+}

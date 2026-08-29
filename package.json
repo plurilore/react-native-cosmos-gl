@@ -1,0 +1,106 @@
+{
+  "name": "react-native-cosmos-gl",
+  "version": "0.1.0",
+  "description": "GPU-accelerated force graph for React Native. A port of cosmos.gl to iOS, Android and the web.",
+  "keywords": [
+    "react-native",
+    "expo",
+    "graph",
+    "force-graph",
+    "network-graph",
+    "node-link",
+    "webgl",
+    "webgl2",
+    "gpu",
+    "gpgpu",
+    "visualization",
+    "dataviz",
+    "force-directed",
+    "cosmos.gl",
+    "graph-layout"
+  ],
+  "license": "MIT",
+  "author": "react-native-cosmos-gl contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nikitabraganov/react-native-cosmos-gl.git"
+  },
+  "main": "./lib/commonjs/index.js",
+  "module": "./lib/module/index.js",
+  "types": "./lib/typescript/index.d.ts",
+  "react-native": "src/index.ts",
+  "source": "src/index.ts",
+  "files": [
+    "src",
+    "lib",
+    "README.md",
+    "LICENSE",
+    "!**/__tests__",
+    "!**/*.test.ts"
+  ],
+  "scripts": {
+    "build": "bob build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf lib",
+    "shaders": "node scripts/build-shaders.mjs",
+    "prepare": "bob build",
+    "bench": "tsx scripts/benchmark-vs-d3.mjs",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "expo-gl": ">=13.0.0",
+    "react": ">=18.0.0",
+    "react-native": ">=0.72.0"
+  },
+  "peerDependenciesMeta": {
+    "expo-gl": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/react": "^19.0.0",
+    "d3-force": "^3.0.0",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "react": "^19.0.0",
+    "react-native": "^0.79.0",
+    "react-native-builder-bob": "^0.40.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^2.1.9",
+    "tsx": "^4.19.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "react-native-builder-bob": {
+    "source": "src",
+    "output": "lib",
+    "targets": [
+      [
+        "commonjs"
+      ],
+      [
+        "module"
+      ],
+      [
+        "typescript",
+        {
+          "project": "tsconfig.build.json"
+        }
+      ]
+    ]
+  },
+  "homepage": "https://github.com/nikitabraganov/react-native-cosmos-gl#readme",
+  "bugs": {
+    "url": "https://github.com/nikitabraganov/react-native-cosmos-gl/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+lib/
+.expo/
+*.log
+.DS_Store
+coverage/
+reference/

@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "react-native-cosmos-gl",
+    "slug": "react-native-cosmos-gl-example",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#111318",
+    "assetBundlePatterns": ["**/*"],
+    "ios": { "supportsTablet": true, "bundleIdentifier": "gl.cosmos.reactnative.example" },
+    "android": { "package": "gl.cosmos.reactnative.example" },
+    "web": { "bundler": "metro" }
+  }
+}

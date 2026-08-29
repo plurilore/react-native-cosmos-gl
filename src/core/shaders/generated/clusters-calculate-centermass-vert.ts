@@ -1,0 +1,57 @@
+// Generated from shaders/Clusters/calculate-centermass.vert by scripts/build-shaders.mjs. Do not edit.
+// Derived from cosmos.gl (https://github.com/cosmosgl/graph), MIT licensed.
+export const clustersCalculateCentermassVert = `#version 300 es
+#ifdef GL_ES
+precision highp float;
+#endif
+
+uniform sampler2D positionsTexture;
+uniform sampler2D clusterTexture;
+uniform sampler2D exitTexture;
+
+#ifdef USE_UNIFORM_BUFFERS
+layout(std140) uniform calculateCentermassUniforms {
+  float clustersTextureSize;
+} calculateCentermass;
+
+#define clustersTextureSize calculateCentermass.clustersTextureSize
+#else
+uniform float clustersTextureSize;
+#endif
+
+in vec2 pointIndices;
+
+out vec4 rgba;
+
+void main() {
+  rgba = vec4(0.0);
+
+  ivec2 pointTexel = ivec2(pointIndices);
+
+  // Absent points must not contribute to their cluster's centroid. (exit.G = absent)
+  vec4 exitStatus = texelFetch(exitTexture, pointTexel, 0);
+  if (exitStatus.g > 0.5) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    gl_PointSize = 0.0;
+    return;
+  }
+
+  // Unclustered points ([-1, -1]) must not contribute mass to any cluster —
+  // a default position of (0, 0) is the framebuffer's center texel, a real
+  // cluster's slot, so cull them off-screen instead.
+  vec4 pointClusterIndices = texelFetch(clusterTexture, pointTexel, 0);
+  if (pointClusterIndices.x < 0.0 || pointClusterIndices.y < 0.0) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    gl_PointSize = 0.0;
+    return;
+  }
+
+  vec4 pointPosition = texelFetch(positionsTexture, pointTexel, 0);
+  rgba = vec4(pointPosition.xy, 1.0, 0.0);
+
+  vec2 xy = 2.0 * (pointClusterIndices.xy + 0.5) / clustersTextureSize - 1.0;
+  gl_Position = vec4(xy, 0.0, 1.0);
+  gl_PointSize = 1.0;
+}
+`
+export default clustersCalculateCentermassVert

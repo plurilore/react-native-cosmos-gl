@@ -1,0 +1,66 @@
+// Generated from shaders/Points/fill-sampled-points.vert by scripts/build-shaders.mjs. Do not edit.
+// Derived from cosmos.gl (https://github.com/cosmosgl/graph), MIT licensed.
+export const pointsFillSampledPointsVert = `#version 300 es
+#ifdef GL_ES
+precision highp float;
+#endif
+
+in vec2 pointIndices;
+
+uniform sampler2D positionsTexture;
+uniform sampler2D exitTexture;
+
+#ifdef USE_UNIFORM_BUFFERS
+layout(std140) uniform fillSampledPointsUniforms {
+  float pointsTextureSize;
+  mat4 transformationMatrix;
+  float spaceSize;
+  vec2 screenSize;
+} fillSampledPoints;
+
+#define pointsTextureSize fillSampledPoints.pointsTextureSize
+#define transformationMatrix fillSampledPoints.transformationMatrix
+#define spaceSize fillSampledPoints.spaceSize
+#define screenSize fillSampledPoints.screenSize
+#else
+uniform float pointsTextureSize;
+uniform float spaceSize;
+uniform vec2 screenSize;
+uniform mat3 transformationMatrix;
+#endif
+
+out vec4 rgba;
+
+void main() {
+  ivec2 pointTexel = ivec2(pointIndices);
+
+  // Keep absent (faded-out) points out of the sample. exit.G = current absence.
+  if (texelFetch(exitTexture, pointTexel, 0).g > 0.5) {
+    rgba = vec4(0.0);
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    gl_PointSize = 0.0;
+    return;
+  }
+
+  vec4 pointPosition = texelFetch(positionsTexture, pointTexel, 0);
+  vec2 p = 2.0 * pointPosition.rg / spaceSize - 1.0;
+  p *= spaceSize / screenSize;
+  #ifdef USE_UNIFORM_BUFFERS
+  // Convert mat4 to mat3 for vec3 multiplication
+  mat3 transformMat3 = mat3(transformationMatrix);
+  vec3 final = transformMat3 * vec3(p, 1);
+  #else
+  vec3 final = transformationMatrix * vec3(p, 1);
+  #endif
+
+  vec2 pointScreenPosition = (final.xy + 1.0) * screenSize / 2.0;
+  float index = pointIndices.g * pointsTextureSize + pointIndices.r;
+  rgba = vec4(index, 1.0, pointPosition.xy);
+  float i = (pointScreenPosition.x + 0.5) / screenSize.x;
+  float j = (pointScreenPosition.y + 0.5) / screenSize.y;
+  gl_Position = vec4(2.0 * vec2(i, j) - 1.0, 0.0, 1.0);
+
+  gl_PointSize = 1.0;
+}
+`
+export default pointsFillSampledPointsVert

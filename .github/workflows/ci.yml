@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm test
+      - name: Shaders are up to date
+        # The generated modules are committed, so a change to shaders/ that was
+        # not regenerated would ship stale GLSL.
+        run: |
+          npm run shaders
+          git diff --exit-code src/core/shaders/generated/ || {
+            echo "::error::src/core/shaders/generated/ is out of date — run 'npm run shaders' and commit the result."
+            exit 1
+          }
+      - name: Typecheck the example
+        # The example is the only place the public API is consumed the way a
+        # user consumes it, so this catches an export that typechecks inside
+        # the library but is unusable from outside.
+        run: npx tsc --noEmit -p example/tsconfig.json
+
+      - name: Build
+        run: npm run build
