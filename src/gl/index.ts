@@ -1,4 +1,5 @@
 export { Device, DeviceError, type DeviceFeatures } from './device'
+export { probeDevice, formatDeviceReport, type DeviceReport } from './probe'
 export { GLBuffer, updateAttributeBuffer, updateAttributeBuffers, createIndexesForBuffer } from './buffer'
 export { Texture, type TextureProps } from './texture'
 export { Framebuffer, createRenderTarget, type FramebufferProps } from './framebuffer'

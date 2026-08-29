@@ -3,6 +3,7 @@ import { View, Text, Pressable, StyleSheet, SafeAreaView, StatusBar } from 'reac
 
 import TypedArraysScreen from './src/TypedArraysScreen'
 import OrgGraphScreen from './src/OrgGraphScreen'
+import DeviceCheckScreen from './src/DeviceCheckScreen'
 
 /**
  * Two ways to feed the same component.
@@ -12,19 +13,22 @@ import OrgGraphScreen from './src/OrgGraphScreen'
  * `<CosmosGraph />` — the difference is only in what you give it.
  */
 export default function App (): React.ReactElement {
-  const [screen, setScreen] = useState<'records' | 'arrays'>('records')
+  const [screen, setScreen] = useState<'records' | 'arrays' | 'device'>('records')
 
   return (
     <View style={styles.root}>
       {/* React Native's own StatusBar, so the example typechecks and runs
           without pulling in expo-status-bar. */}
       <StatusBar barStyle="light-content" />
-      {screen === 'records' ? <OrgGraphScreen /> : <TypedArraysScreen />}
+      {screen === 'records' ? <OrgGraphScreen />
+        : screen === 'arrays' ? <TypedArraysScreen />
+          : <DeviceCheckScreen />}
 
       <SafeAreaView pointerEvents="box-none" style={styles.switcher}>
         <View style={styles.pill}>
           <Segment label="Records" isActive={screen === 'records'} onPress={() => setScreen('records')} />
           <Segment label="Arrays" isActive={screen === 'arrays'} onPress={() => setScreen('arrays')} />
+          <Segment label="Device" isActive={screen === 'device'} onPress={() => setScreen('device')} />
         </View>
       </SafeAreaView>
     </View>

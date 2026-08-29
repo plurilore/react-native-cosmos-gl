@@ -14,11 +14,26 @@ npm install react-native-cosmos-gl
 npx expo install expo-gl
 ```
 
-> **Pre-release.** The engine is complete and covered by 121 tests against a
-> mock WebGL2 context that parses each shader's real declarations — but it has
-> not yet been run on physical hardware. Shader compilation on actual iOS and
-> Android drivers is unverified. Treat `0.x` accordingly, and please open an
-> issue with your device if you hit something.
+> **Pre-release.** The engine is covered by 127 tests against a mock WebGL2
+> context that parses each shader's real declarations — but it has not yet run
+> on physical hardware. Shader compilation on actual iOS and Android drivers is
+> unverified. Treat `0.x` accordingly.
+>
+> **Check your device first.** `probeDevice(gl)` reports whether a device can
+> run the engine and why not, before you write anything against it:
+>
+> ```tsx
+> import { GLView } from 'expo-gl'
+> import { probeDevice, formatDeviceReport } from 'react-native-cosmos-gl'
+>
+> <GLView
+>   style={{ width: 1, height: 1 }}
+>   onContextCreate={(gl) => console.log(formatDeviceReport(probeDevice(gl)))}
+> />
+> ```
+>
+> The example app's **Device** tab does this with a shareable report — useful
+> for issues.
 
 ## Quick start
 

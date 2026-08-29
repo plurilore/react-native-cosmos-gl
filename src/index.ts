@@ -98,3 +98,6 @@ export {
   type DeviceFeatures,
   type GL,
 } from './gl'
+// Run this on a real device before writing anything against the engine: it
+// turns "the graph is blank" into a specific, reportable answer.
+export { probeDevice, formatDeviceReport, type DeviceReport } from './gl/probe'
