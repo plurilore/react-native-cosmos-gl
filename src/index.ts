@@ -81,6 +81,7 @@ export type {
   CosmosPointerEvent,
   CosmosZoomEvent,
   CosmosDragEvent,
+  FitViewBounds,
 } from './core/config'
 export { defaultConfigValues, createDefaultConfig } from './core/variables'
 

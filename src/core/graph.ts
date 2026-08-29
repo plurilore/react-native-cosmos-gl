@@ -22,11 +22,11 @@ import {
   applyConfig,
   resetConfigToDefaults,
 } from './variables'
-import type { GraphConfig, GraphConfigInterface, CosmosPointerEvent } from './config'
+import type { GraphConfig, GraphConfigInterface, CosmosPointerEvent, FitViewBounds } from './config'
 import { getRgbaColor } from './color'
-import { textureSizeFor, clamp } from './helper'
+import { textureSizeFor, clamp, boundScale } from './helper'
 
-export type { GraphConfig, GraphConfigInterface }
+export type { GraphConfig, GraphConfigInterface, FitViewBounds }
 
 /**
  * A GPU-accelerated force graph.
@@ -392,15 +392,71 @@ export class Graph {
     this.zoomInstance.animateTo(this.zoomInstance.getTransform(positions, undefined, padding), duration)
   }
 
-  /** Fits the given points into the viewport. */
-  public fitViewByPointIndices (indices: number[], duration = this.config.fitViewDuration, padding = this.config.fitViewPadding): void {
+  /**
+   * Fits the given points into the viewport.
+   *
+   * Returns false without moving the camera when none of the indices name a
+   * point that exists yet. That is the normal case immediately after adding
+   * points: the position texture is only resized on the next `applyDataUpdates`,
+   * so a fit issued in the same tick as the data has nothing to read. A caller
+   * that gets false should retry on the following frame rather than assume the
+   * camera moved.
+   *
+   * `bounds` caps how far the fit may zoom. A fit of a *single* point otherwise
+   * settles at a scale set by the one-space-unit minimum extent — in the
+   * hundreds — which is legal, useless, and hard to recover from by hand.
+   */
+  public fitViewByPointIndices (
+    indices: number[],
+    duration = this.config.fitViewDuration,
+    padding = this.config.fitViewPadding,
+    bounds?: FitViewBounds
+  ): boolean {
     const all = this.getPointPositions()
-    const subset = new Float32Array(indices.length * 2)
-    indices.forEach((index, i) => {
-      subset[i * 2] = all[index * 2] as number
-      subset[i * 2 + 1] = all[index * 2 + 1] as number
-    })
-    this.zoomInstance.animateTo(this.zoomInstance.getTransform(subset, undefined, padding), duration)
+    const pointsNumber = all.length / 2
+    const subset: number[] = []
+    for (const index of indices) {
+      if (!Number.isInteger(index) || index < 0 || index >= pointsNumber) continue
+      const x = all[index * 2] as number
+      const y = all[index * 2 + 1] as number
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+      subset.push(x, y)
+    }
+    if (subset.length === 0) return false
+
+    const zoom = this.zoomInstance
+    const natural = zoom.getTransform(subset, undefined, padding)
+    const scale = boundScale(natural.k, bounds)
+    zoom.animateTo(scale === natural.k ? natural : zoom.getTransform(subset, scale, padding), duration)
+    return true
+  }
+
+  /**
+   * Moves a point to the middle of the screen without changing the zoom level.
+   *
+   * The counterpart to `fitViewByPointIndices` for the case where the caller
+   * has already decided how close it wants to be: expanding a node should not
+   * silently rescale the view the reader chose. Returns false when the point
+   * does not exist yet, on the same terms as the fit.
+   */
+  public centerOnPointIndex (index: number, duration = this.config.fitViewDuration, scale?: number): boolean {
+    const all = this.getPointPositions()
+    if (!Number.isInteger(index) || index < 0 || index * 2 + 1 >= all.length) return false
+    const x = all[index * 2] as number
+    const y = all[index * 2 + 1] as number
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false
+    this.centerOnSpacePosition([x, y], duration, scale)
+    return true
+  }
+
+  /** Moves a position in simulation space to the middle of the screen. */
+  public centerOnSpacePosition (position: [number, number], duration = this.config.fitViewDuration, scale?: number): void {
+    const zoom = this.zoomInstance
+    const [width, height] = this.store.screenSize
+    const k = clamp(scale ?? zoom.eventTransform.k, zoom.scaleExtent[0], zoom.scaleExtent[1])
+    const x = this.store.scaleX(position[0])
+    const y = this.store.scaleY(position[1])
+    zoom.animateTo(new ZoomTransform(k, width / 2 - x * k, height / 2 - y * k), duration)
   }
 
   public setZoomLevel (level: number, duration = 0): void {
@@ -866,6 +922,9 @@ export class Graph {
     store.setFocusedPoint(config.focusedPointIndex)
     store.updateLinkHoveringEnabled(config)
     store.adjustSpaceSize(config.spaceSize, this.device.features.maxTextureSize)
+    // Applied here rather than only at construction so a host can tighten the
+    // range in response to the data it has just loaded.
+    this.zoomInstance.setScaleExtent(config.scaleExtent)
     this.isPointStatusUpdateNeeded = true
     this.isDataUpdateNeeded = true
   }

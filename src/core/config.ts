@@ -287,6 +287,18 @@ export interface GraphConfigInterface {
   initialZoomLevel?: number
 
   /**
+   * Lowest and highest zoom level, as `[min, max]`.
+   *
+   * Every path into the view transform is clamped by it — a pinch, a
+   * `setZoomLevel`, and the fits — so it is the one place to stop the camera
+   * reaching a scale the graph cannot be read at. That matters most for
+   * `fitViewByPointIndices` on a *single* point: a zero-width extent is widened
+   * to one space unit, which puts the fitted scale in the hundreds.
+   * @default [0.001, Infinity]
+   */
+  scaleExtent: [number, number]
+
+  /**
    * Whether pinch-to-zoom and pan gestures are enabled.
    * @default true
    */
@@ -324,6 +336,18 @@ export interface GraphConfigInterface {
    * embedding outputs).
    */
   rescalePositions?: boolean
+}
+
+/**
+ * Limits on the zoom level a fit is allowed to settle at.
+ *
+ * Separate from `scaleExtent`, which is a hard range for the whole view: these
+ * bound one call, so a caller can say "do not jump more than 2x closer than we
+ * are now" without forbidding that scale outright.
+ */
+export type FitViewBounds = {
+  minScale?: number
+  maxScale?: number
 }
 
 /**

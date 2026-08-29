@@ -61,6 +61,34 @@ export class Zoom {
     this.config.onZoom?.({ transform: this.eventTransform, userDriven })
   }
 
+  /**
+   * Narrows or widens the zoom range, bringing the current view inside it.
+   *
+   * Re-clamping immediately matters because the extent can tighten after the
+   * camera has already gone past it — a host that fits a single point and then
+   * sets a ceiling would otherwise stay at the scale it is trying to forbid.
+   */
+  public setScaleExtent (extent: [number, number]): void {
+    const [min, max] = extent
+    // A reversed or non-finite pair would clamp everything to nonsense; treat
+    // it as no constraint rather than blanking the view.
+    if (!(min > 0) || !(max >= min)) this.scaleExtent = [...DEFAULT_SCALE_EXTENT]
+    else this.scaleExtent = [min, max]
+
+    const { k } = this.eventTransform
+    const clamped = clamp(k, this.scaleExtent[0], this.scaleExtent[1])
+    if (clamped === k) return
+    // Scale about the view centre so the content under the middle of the screen
+    // stays put, rather than the origin sliding into view.
+    const [width, height] = this.store.screenSize
+    const factor = clamped / k
+    this.setTransform(new ZoomTransform(
+      clamped,
+      width / 2 - (width / 2 - this.eventTransform.x) * factor,
+      height / 2 - (height / 2 - this.eventTransform.y) * factor
+    ))
+  }
+
   /** Begins a gesture. Clears any programmatic override and animation. */
   public start (userDriven = true): void {
     this.isRunning = true

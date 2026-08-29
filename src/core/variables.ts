@@ -128,6 +128,7 @@ export const defaultConfigValues = {
   enableZoom: true,
   enableSimulationDuringZoom: false,
   initialZoomLevel: undefined,
+  scaleExtent: [0.001, Infinity],
 
   // Drag
   enableDrag: false,

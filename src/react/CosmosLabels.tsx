@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, StyleSheet, type StyleProp, type TextStyle, type ViewStyle } from 'react-native'
 import { useCosmosGraph } from './CosmosGraph'
+import { isSamePlacement, type PlacedLabel } from './label-placement'
 
 export type CosmosLabelsProps = {
   /**
@@ -41,7 +42,13 @@ export type CosmosLabelsProps = {
    * settles.
    */
   updateIntervalMs?: number
-  /** Only label these points. Defaults to the highest-weighted ones. */
+  /**
+   * Only label these points. Defaults to the highest-weighted ones.
+   *
+   * Supplying this takes over candidate selection entirely, so `labelSelected`,
+   * `labelUnselected` and `selectedLimit` no longer apply — the caller has
+   * already decided, including about the selection.
+   */
   pointIndices?: number[]
   /** Hide labels below this zoom level, where they would crowd. */
   minZoom?: number
@@ -49,13 +56,6 @@ export type CosmosLabelsProps = {
   containerStyle?: StyleProp<ViewStyle>
   /** Tapping a label selects its point. */
   selectOnPress?: boolean
-}
-
-type PlacedLabel = {
-  index: number
-  text: string
-  x: number
-  y: number
 }
 
 const DEFAULT_LIMIT = 60
@@ -86,6 +86,12 @@ export function CosmosLabels ({
   const { graph, resolved, isReady, selectPoints, selectedPointIndices } = useCosmosGraph()
   const [labels, setLabels] = useState<PlacedLabel[]>([])
   const trackedRef = useRef<number[]>([])
+  const candidatesRef = useRef<number[]>([])
+  // Read at press time so the handler can stay stable across ticks.
+  const resolvedRef = useRef(resolved)
+  resolvedRef.current = resolved
+  const selectPointsRef = useRef(selectPoints)
+  selectPointsRef.current = selectPoints
 
   /**
    * Which points get labels: the caller's list, or the highest-weighted ones.
@@ -121,17 +127,29 @@ export function CosmosLabels ({
     return ranked.slice(0, limit)
   }, [resolved, pointIndices, limit, labelSelected, selectedLimit, labelUnselected, selectedPointIndices])
 
+  candidatesRef.current = candidates
+
   // Registering the tracked set is what makes the readback small, so it is done
   // when the set changes rather than on every update tick.
+  //
+  // Keyed on the *contents* rather than the array: a caller that recomputes an
+  // equal `pointIndices` on every selection change would otherwise re-register
+  // each time, and the cleanup below destroys the tracked framebuffer and both
+  // its textures — rebuilt, for the same set of points, on every tap.
+  const candidatesKey = candidates.join(',')
   useEffect(() => {
     if (!graph || !isReady) return
-    trackedRef.current = candidates
-    graph.trackPointsByIndices(candidates.length > 0 ? candidates : undefined)
+    trackedRef.current = candidatesRef.current
+    const indices = candidatesRef.current
+    graph.trackPointsByIndices(indices.length > 0 ? indices : undefined)
     return () => graph.trackPointsByIndices(undefined)
-  }, [graph, isReady, candidates])
+  }, [graph, isReady, candidatesKey])
 
+  // Keyed on `candidatesKey` and not on `candidates`, for the same reason as the
+  // effect above: a caller recomputing an equal array must not tear down and
+  // restart the placement timer on every render.
   useEffect(() => {
-    if (!graph || !isReady || candidates.length === 0) {
+    if (!graph || !isReady || candidatesRef.current.length === 0) {
       setLabels([])
       return
     }
@@ -151,7 +169,7 @@ export function CosmosLabels ({
 
       for (const index of trackedRef.current) {
         const position = positions.get(index)
-        const text = resolved?.pointLabels?.[index]
+        const text = resolvedRef.current?.pointLabels?.[index]
         if (!position || text === undefined) continue
         const [x, y] = graph.spaceToScreenPosition(position)
         // Off-screen labels are dropped rather than clamped to the edge, where
@@ -161,7 +179,11 @@ export function CosmosLabels ({
         placed.push({ index, text, x, y })
       }
 
-      setLabels(placed)
+      // A settled graph places every label where it already is. Re-rendering
+      // then costs a full reconciliation of up to `limit` text nodes for no
+      // visible change — and it lands on the same JS thread that drives the
+      // frame loop, so it is paid in frames.
+      setLabels((current) => (isSamePlacement(current, placed) ? current : placed))
     }
 
     update()
@@ -170,7 +192,13 @@ export function CosmosLabels ({
       cancelled = true
       clearInterval(timer)
     }
-  }, [graph, isReady, candidates, resolved, updateIntervalMs, minZoom])
+  }, [graph, isReady, candidatesKey, updateIntervalMs, minZoom])
+
+  // Stable across ticks, so a memoised row is not invalidated by its handler.
+  const handlePress = useCallback((index: number) => {
+    onLabelPress?.(index, resolvedRef.current?.pointIds?.[index])
+    if (selectOnPress) selectPointsRef.current([index], { includeNeighbors: true })
+  }, [onLabelPress, selectOnPress])
 
   if (labels.length === 0) return null
 
@@ -179,30 +207,52 @@ export function CosmosLabels ({
   return (
     <View pointerEvents={isInteractive ? 'box-none' : 'none'} style={[StyleSheet.absoluteFill, containerStyle]}>
       {labels.map((label) => (
-        <Text
+        <LabelText
           key={label.index}
-          onPress={isInteractive
-            ? () => {
-              onLabelPress?.(label.index, resolved?.pointIds?.[label.index])
-              if (selectOnPress) selectPoints([label.index], { includeNeighbors: true })
-            }
-            : undefined}
-          numberOfLines={1}
-          style={[
-            styles.label,
-            // Translated rather than positioned by `left`/`top` so the label is
-            // centred horizontally on its point and sits just above it, clear
-            // of the mark itself.
-            { transform: [{ translateX: label.x }, { translateY: label.y }] },
-            textStyle,
-          ]}
-        >
-          {label.text}
-        </Text>
+          label={label}
+          isInteractive={isInteractive}
+          onPress={handlePress}
+          textStyle={textStyle}
+        />
       ))}
     </View>
   )
 }
+
+type LabelTextProps = {
+  label: PlacedLabel
+  isInteractive: boolean
+  onPress: (index: number) => void
+  textStyle: StyleProp<TextStyle> | undefined
+}
+
+/**
+ * One label.
+ *
+ * Memoised, and given a stable press handler, so a tick that moves three labels
+ * re-renders three of them rather than all sixty.
+ */
+const LabelText = React.memo(function LabelText (
+  { label, isInteractive, onPress, textStyle }: LabelTextProps
+): React.ReactElement {
+  const press = useCallback(() => onPress(label.index), [onPress, label.index])
+  return (
+    <Text
+      onPress={isInteractive ? press : undefined}
+      numberOfLines={1}
+      style={[
+        styles.label,
+        // Translated rather than positioned by `left`/`top` so the label is
+        // centred horizontally on its point and sits just above it, clear
+        // of the mark itself.
+        { transform: [{ translateX: label.x }, { translateY: label.y }] },
+        textStyle,
+      ]}
+    >
+      {label.text}
+    </Text>
+  )
+})
 
 const styles = StyleSheet.create({
   label: {

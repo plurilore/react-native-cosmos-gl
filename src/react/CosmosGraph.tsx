@@ -22,7 +22,7 @@ import {
 } from 'react-native'
 
 import { Graph } from '../core/graph'
-import type { GraphConfig } from '../core/config'
+import type { GraphConfig, FitViewBounds } from '../core/config'
 import type { PointImageData } from '../core/graph-data'
 import type { Rgba } from '../core/color'
 import type { ColorStrategy, SizeStrategy } from '../data/encode'
@@ -189,6 +189,16 @@ export type CosmosGraphProps = GraphConfig & {
    * what connects them to it.
    */
   children?: React.ReactNode
+
+  /**
+   * Simulation energy a position update restarts the layout with, in `0..1`.
+   *
+   * `1` (the default) re-anneals the whole graph, which is right when the data
+   * is replaced and wrong when it grows: adding a node's neighbours should not
+   * move every other node out from under the reader. A low value settles the
+   * new points into the existing layout instead of redrawing it.
+   */
+  simulationRestartAlpha?: number
 }
 
 /** How a selection expands from the points it was given. */
@@ -248,9 +258,34 @@ export type CosmosGraphRef = {
   unpause: () => void
   step: () => void
   fitView: (duration?: number, padding?: number) => void
-  fitViewByPointIndices: (indices: number[], duration?: number, padding?: number) => void
+  /**
+   * Fits the given points, optionally bounding how far it may zoom. False means
+   * none of the indices exist yet and the camera did not move — retry on the
+   * next frame rather than assuming it did.
+   */
+  fitViewByPointIndices: (
+    indices: number[],
+    duration?: number,
+    padding?: number,
+    bounds?: FitViewBounds
+  ) => boolean
+  /** Centres a point without changing the zoom level. False if it does not exist yet. */
+  centerOnPointIndex: (index: number, duration?: number, scale?: number) => boolean
+  /** Centres a position in simulation space without changing the zoom level. */
+  centerOnSpacePosition: (position: [number, number], duration?: number, scale?: number) => void
   setZoomLevel: (level: number, duration?: number) => void
   getZoomLevel: () => number
+  /**
+   * Registers the points whose positions should be cheap to read back, for a
+   * host-drawn label overlay. `undefined` stops tracking.
+   */
+  trackPointsByIndices: (indices?: number[]) => void
+  /** Tracked positions in simulation space, by point index. */
+  getTrackedPointPositions: () => Map<number, [number, number]>
+  /** Simulation space to screen pixels, under the current view transform. */
+  spaceToScreenPosition: (position: [number, number]) => [number, number]
+  /** Screen pixels to simulation space, under the current view transform. */
+  screenToSpacePosition: (position: [number, number]) => [number, number]
   getPointPositions: () => Float32Array
   findPointOnScreen: (x: number, y: number) => { index: number; position: [number, number] } | undefined
   /** Point indices inside a screen-space rectangle, given as opposite corners. */
@@ -302,7 +337,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     linkColorBy, linkColorStrategy, linkColorPalette, linkColorByFn,
     linkWidthBy, linkWidthRange, linkWidthByFn, linkStrengthBy, linkStrengthRange,
     selectPointOnClick, selectNeighborsOnClick, resetSelectionOnBackgroundClick,
-    onSelectionChange, onDataResolved,
+    onSelectionChange, onDataResolved, simulationRestartAlpha = 1,
     style, msaaSamples = 0, onReady, onError, children,
     ...config
   } = props
@@ -461,10 +496,16 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
   // `Float32Array` twice does no GPU work. Callers who mutate an array in place
   // should pass a new view (`array.subarray()`) to signal the change.
 
+  // `simulationRestartAlpha` is read through a ref: a change to it alone must
+  // not re-run this effect, which would restart the layout on nothing but a
+  // prop tweak.
+  const restartAlphaRef = useRef(simulationRestartAlpha)
+  restartAlphaRef.current = simulationRestartAlpha
+
   useEffect(() => {
     if (!isReady || !effectivePointPositions) return
     graphRef.current?.setPointPositions(effectivePointPositions)
-    graphRef.current?.start()
+    graphRef.current?.start(restartAlphaRef.current)
   }, [isReady, effectivePointPositions])
 
   useEffect(() => {
@@ -539,12 +580,14 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
 
   // Config changes go through the partial setter, so properties this component
   // does not own — anything set imperatively through the ref — survive.
+  const writtenConfigRef = useRef(new Map<string, unknown>())
   useEffect(() => {
-    if (!isReady) return
+    const graph = graphRef.current
+    if (!isReady || !graph) return
     // Selection is merged last so it wins over a `highlightedPointIndices`
     // passed as a prop — a tap must visibly do something even when the caller
     // also drives highlighting.
-    graphRef.current?.setConfigPartial({ ...configRef.current, pixelRatio, ...selectionConfig })
+    applyConfigDelta(graph, { ...configRef.current, pixelRatio, ...selectionConfig }, writtenConfigRef.current)
   })
 
   useEffect(() => {
@@ -570,10 +613,18 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     unpause: () => graphRef.current?.unpause(),
     step: () => graphRef.current?.step(),
     fitView: (duration, padding) => graphRef.current?.fitView(duration, padding),
-    fitViewByPointIndices: (indices, duration, padding) =>
-      graphRef.current?.fitViewByPointIndices(indices, duration, padding),
+    fitViewByPointIndices: (indices, duration, padding, bounds) =>
+      graphRef.current?.fitViewByPointIndices(indices, duration, padding, bounds) ?? false,
+    centerOnPointIndex: (index, duration, scale) =>
+      graphRef.current?.centerOnPointIndex(index, duration, scale) ?? false,
+    centerOnSpacePosition: (position, duration, scale) =>
+      graphRef.current?.centerOnSpacePosition(position, duration, scale),
     setZoomLevel: (level, duration) => graphRef.current?.setZoomLevel(level, duration),
     getZoomLevel: () => graphRef.current?.getZoomLevel() ?? 1,
+    trackPointsByIndices: (indices) => graphRef.current?.trackPointsByIndices(indices),
+    getTrackedPointPositions: () => graphRef.current?.getTrackedPointPositionsMap() ?? new Map(),
+    spaceToScreenPosition: (position) => graphRef.current?.spaceToScreenPosition(position) ?? position,
+    screenToSpacePosition: (position) => graphRef.current?.screenToSpacePosition(position) ?? position,
     getPointPositions: () => graphRef.current?.getPointPositions() ?? new Float32Array(),
     findPointOnScreen: (x, y) => graphRef.current?.findPointOnScreen(x, y),
     findPointsInRect: (rect) => graphRef.current?.findPointsInRect(rect) ?? [],
@@ -666,6 +717,43 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     </View>
   )
 })
+
+/**
+ * Pushes into the engine only what actually changed.
+ *
+ * This runs on every render — it has to, because the parent may have passed a
+ * new callback and the engine must call the latest one. `setConfigPartial` is
+ * not cheap enough for that: it walks every config key, re-parses the colour
+ * strings and marks the point status texture stale, so a parent's unrelated
+ * state change was costing GPU work every time.
+ *
+ * Callbacks are therefore assigned straight onto the engine's config object,
+ * which needs none of that follow-up, and everything else goes through the
+ * setter only when its value differs. Values are compared by identity, so a
+ * caller who mutates an array in place must pass a new one — the same rule the
+ * data props already follow.
+ */
+function applyConfigDelta (graph: Graph, next: GraphConfig, written: Map<string, unknown>): void {
+  const engineConfig = graph.config as unknown as Record<string, unknown>
+  const delta: Record<string, unknown> = {}
+  let hasDelta = false
+
+  for (const [key, value] of Object.entries(next)) {
+    if (typeof value === 'function') {
+      engineConfig[key] = value
+      continue
+    }
+    // `has` rather than a plain lookup: `undefined` is a meaningful value here —
+    // `setConfigPartial` reads it as "reset to the default" — and must be
+    // written the first time it is seen.
+    if (written.has(key) && written.get(key) === value) continue
+    delta[key] = value
+    written.set(key, value)
+    hasDelta = true
+  }
+
+  if (hasDelta) graph.setConfigPartial(delta as GraphConfig)
+}
 
 /**
  * Touch handling on `PanResponder`.

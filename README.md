@@ -214,6 +214,7 @@ const ref = useRef<CosmosGraphRef>(null)
 ref.current?.fitView()               // frame every point
 ref.current?.fitViewByPointIndices(ids)
 ref.current?.setZoomLevel(4, 300)    // zoom to 4×, animated over 300 ms
+ref.current?.centerOnPointIndex(i)   // centre a point, keeping the zoom level
 ref.current?.start()                 // restart the simulation
 ref.current?.pause()
 ref.current?.getPointPositions()     // current layout, read back from the GPU
@@ -222,6 +223,31 @@ ref.current?.findPointsInRect([[x0, y0], [x1, y1]])
 ref.current?.findPointsInPolygon(path)   // lasso selection
 ref.current?.getClusterPositions()
 ref.current?.getGraph()              // the underlying engine
+```
+
+Two things about framing a small set of points are worth knowing before you hit
+them.
+
+**A fit of a single point zooms to a scale you do not want.** One point has zero
+extent, which is widened to one space unit, so the fitted scale lands in the
+hundreds. Pass bounds:
+
+```tsx
+ref.current?.fitViewByPointIndices([i], 250, 0.3, { maxScale: zoom * 2.5 })
+```
+
+Or set `scaleExtent` once as a prop and have every path — pinch, `setZoomLevel`,
+every fit — respect it.
+
+**A fit returns `false` when none of its points exist yet.** Positions are read
+from a texture that is resized on the next data update, so a fit issued in the
+same tick as the data has nothing to read and does not move the camera. Retry on
+the following frame rather than assuming it moved:
+
+```tsx
+if (!ref.current?.fitViewByPointIndices(ids)) {
+  requestAnimationFrame(() => ref.current?.fitViewByPointIndices(ids))
+}
 ```
 
 ## Configuration
@@ -242,6 +268,8 @@ knowing first:
 | `linkBlending` | `true` | `false` is markedly faster on dense graphs. |
 | `pointOcclusionCulling` | `true` | Depth-rejects hidden points before shading. |
 | `enableDrag` | `false` | A pan starting on a point moves that point. |
+| `scaleExtent` | `[0.001, Infinity]` | Hard `[min, max]` zoom range. Every path into the view respects it. |
+| `simulationRestartAlpha` | `1` | Energy a position update restarts the layout with. Low values grow a graph without re-annealing it. |
 | `simulationCluster` | `0.1` | Pull toward a point's cluster centroid. |
 | `simulationCollision` | `0` | Overlap avoidance. `0` skips the grid entirely. |
 | `rescalePositions` | auto | Fits incoming coordinates to the space. |
@@ -266,6 +294,15 @@ pen and mouse.
   pyramid closed by a depth-peeled Monte-Carlo near field.
 - **Avoid reading back.** `getPointPositions()` stalls the GPU pipeline. It is
   fine on a tap; it is not fine per frame.
+- **The frame loop is on the JS thread**, so anything else on it is paid in
+  frames. That is what makes label overlays the usual cost on a busy screen:
+  `<CosmosLabels>` re-places on a timer and skips the re-render when nothing
+  moved, but a host that re-renders the graph's parent every frame will still
+  starve it.
+- **Adding points should not re-anneal the layout.** A position update restarts
+  the simulation at `simulationRestartAlpha`; leave it at `1` when the data is
+  replaced, and drop it to ~0.25 when the graph merely grew, so the nodes
+  already on screen stay where the reader left them.
 
 ## Device requirements
 

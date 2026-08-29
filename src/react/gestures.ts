@@ -88,7 +88,7 @@ export class GestureController {
   public onPinchUpdate (scale: number, focalX: number, focalY: number): void {
     const start = this.gestureStartTransform
     if (!start || !this.graph.config.enableZoom) return
-    this.graph.setZoomTransform(start.scaleAbout(scale, focalX, focalY), true)
+    this.graph.setZoomTransform(start.scaleAbout(this.clampFactor(start.k, scale), focalX, focalY), true)
   }
 
   public onPinchEnd (): void {
@@ -118,14 +118,32 @@ export class GestureController {
    */
   public onWheel (delta: number, x: number, y: number): void {
     if (!this.graph.config.enableZoom) return
-    const factor = Math.exp(-delta * 0.002)
-    this.graph.setZoomTransform(this.graph.zoomTransform.scaleAbout(factor, x, y), true)
+    const current = this.graph.zoomTransform
+    const factor = this.clampFactor(current.k, Math.exp(-delta * 0.002))
+    this.graph.setZoomTransform(current.scaleAbout(factor, x, y), true)
   }
 
   /** A double tap, zooming in about the tapped point. */
   public onDoubleTap (x: number, y: number, factor = 2, duration = 250): void {
     if (!this.graph.config.enableZoom) return
-    this.graph.zoomInstance.animateTo(this.graph.zoomTransform.scaleAbout(factor, x, y), duration)
+    const current = this.graph.zoomTransform
+    this.graph.zoomInstance.animateTo(current.scaleAbout(this.clampFactor(current.k, factor), x, y), duration)
+  }
+
+  /**
+   * Trims a zoom factor so the resulting scale lands inside `scaleExtent`.
+   *
+   * The clamp has to happen here rather than in `setTransform`, which sees only
+   * the finished transform and so can only correct `k` — leaving the translation
+   * that was computed for the unclamped scale, which slides the content out from
+   * under the fingers for as long as the pinch continues past the limit.
+   */
+  private clampFactor (currentScale: number, factor: number): number {
+    const [min, max] = this.graph.zoomInstance.scaleExtent
+    const target = currentScale * factor
+    if (target > max) return max / currentScale
+    if (target < min) return min / currentScale
+    return factor
   }
 
   private buildEvent (x: number, y: number, isSecondary: boolean): CosmosPointerEvent {

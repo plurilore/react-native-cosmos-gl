@@ -79,6 +79,38 @@ describe('Zoom', () => {
     expect(zoom.eventTransform.k).toBeGreaterThanOrEqual(zoom.scaleExtent[0])
   })
 
+  it('brings the current view inside a newly narrowed extent', () => {
+    // The extent can tighten after the camera has already gone past it — a fit
+    // of one point, then a ceiling. Leaving the view outside the range it was
+    // just told to respect makes the setting look like it did nothing.
+    const zoom = makeZoom()
+    zoom.setTransform(new ZoomTransform(120, 0, 0))
+    zoom.setScaleExtent([0.05, 8])
+    expect(zoom.eventTransform.k).toBe(8)
+
+    zoom.setScaleExtent([2, 8])
+    zoom.setTransform(new ZoomTransform(0.5, 0, 0))
+    expect(zoom.eventTransform.k).toBe(2)
+  })
+
+  it('keeps the view centre fixed while re-clamping', () => {
+    const zoom = makeZoom()
+    zoom.setTransform(new ZoomTransform(100, -400, -300))
+    const before = zoom.convertScreenToSpacePosition([400, 300])
+    zoom.setScaleExtent([0.05, 4])
+    const after = zoom.convertScreenToSpacePosition([400, 300])
+    expect(after[0]).toBeCloseTo(before[0], 3)
+    expect(after[1]).toBeCloseTo(before[1], 3)
+  })
+
+  it('ignores a reversed or non-positive extent rather than blanking the view', () => {
+    const zoom = makeZoom()
+    zoom.setScaleExtent([10, 1])
+    expect(zoom.scaleExtent).toEqual([0.001, Infinity])
+    zoom.setScaleExtent([0, 4])
+    expect(zoom.scaleExtent).toEqual([0.001, Infinity])
+  })
+
   it('round-trips screen and space coordinates', () => {
     const zoom = makeZoom()
     zoom.setTransform(new ZoomTransform(2.5, -120, 60))

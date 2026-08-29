@@ -5,6 +5,19 @@ export function clamp (value: number, min: number, max: number): number {
 }
 
 /** True for a real number — rejects `undefined`, `null` and `NaN`. */
+/**
+ * Applies a `FitViewBounds` to a scale, ignoring bounds that are not finite
+ * positive numbers rather than letting one poison the result.
+ */
+export function boundScale (scale: number, bounds?: { minScale?: number; maxScale?: number }): number {
+  if (!bounds) return scale
+  let result = scale
+  const { minScale, maxScale } = bounds
+  if (typeof maxScale === 'number' && maxScale > 0 && result > maxScale) result = maxScale
+  if (typeof minScale === 'number' && minScale > 0 && result < minScale) result = minScale
+  return result
+}
+
 export function isNumber (value: number | undefined | null): boolean {
   return value !== undefined && value !== null && !Number.isNaN(value)
 }

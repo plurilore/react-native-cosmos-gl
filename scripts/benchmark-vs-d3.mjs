@@ -69,7 +69,7 @@ function makeGraph (nodeCount, seed = 7) {
   const random = makeRandom(seed)
   const nodes = []
   for (let i = 0; i < nodeCount; i++) {
-    nodes.push({ id: `n${i}`, radius: 4 + random() * 12, type: i % 50 === 0 ? 'Tradition' : 'Topic' })
+    nodes.push({ id: `n${i}`, radius: 4 + random() * 12, type: i % 50 === 0 ? 'hub' : 'leaf' })
   }
   const edges = []
   const edgesPerNode = 3
@@ -78,7 +78,9 @@ function makeGraph (nodeCount, seed = 7) {
       // Preferential-ish attachment, so degree is skewed like a real graph
       // rather than uniform — which is what makes the quadtree's work realistic.
       const target = Math.floor(random() * random() * i)
-      edges.push({ source: `n${i}`, target: `n${target}`, relation: e === 0 ? 'IN_TRADITION' : 'RELATED_TO' })
+      // Two edge kinds, so the link force has a distance to vary — the shape
+      // most node-link layouts have, whatever the domain.
+      edges.push({ source: `n${i}`, target: `n${target}`, relation: e === 0 ? 'primary' : 'secondary' })
     }
   }
   return { nodes, edges }
@@ -104,7 +106,7 @@ function buildD3Simulation (graph) {
     .alphaDecay(0.035)
     .velocityDecay(0.36)
     .force('links', forceLink(links).id((n) => n.id)
-      .distance((l) => (l.relation === 'IN_TRADITION' ? 82 : 62)).strength(0.16))
+      .distance((l) => (l.relation === 'primary' ? 82 : 62)).strength(0.16))
     .force('charge', forceManyBody().strength(repulsion).distanceMin(12).distanceMax(460))
     .force('collision', forceCollide().radius((n) => n.radius + 6).strength(1).iterations(2))
     .force('center', forceCenter(800, 800).strength(0.055))
