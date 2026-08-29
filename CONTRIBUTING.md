@@ -38,6 +38,29 @@ assumptions and fold the built-in to `false`, and this engine treats NaN as
 data — an absent point *is* a NaN position — so a folded test resurrects removed
 points at the origin. Don't reintroduce `isnan()`; a test enforces this.
 
+### Compiling them offline
+
+The mock context below links programs without ever compiling GLSL, and desktop
+drivers accept type errors that Adreno and Mali reject outright — a rejected
+shader is a black canvas with one line in the Metro log. So there is a gate that
+runs the real thing:
+
+```bash
+npm run shaders:tools     # downloads the Khronos reference compiler, once
+npm run shaders:validate  # compiles all 38, exits non-zero on any error
+```
+
+Without the binary the validator prints a notice and exits 0, so it never blocks
+a contributor who hasn't installed it; CI installs it and gets the real gate. It
+mirrors what the engine does at compile time — the runtime `#define`s, and the
+shared GLSL that `withShaderModules` splices in — so what it compiles is what
+the driver compiles.
+
+The mistake that motivated it: `scaleLinksOnZoom` was declared `uniform bool`
+while the shader body compared it against `0.0`. GLSL ES 3.00 has no bool→float
+conversion, so that is a compile error — one that had been sitting in the
+uniform-block branch's twin, unseen by every other check in the repo.
+
 ## Testing without a GPU
 
 `src/__tests__/mock-gl.ts` is a WebGL2 context that parses each shader's real
@@ -57,7 +80,9 @@ it, and the test will tell you if the two disagree.
 Point image atlases and point/link sampling for label placement. Both exist
 upstream in [cosmos.gl](https://github.com/cosmosgl/graph), and the shaders for
 both are already generated in `src/core/shaders/generated/` — they need their
-module and wiring, not new GLSL.
+module and wiring, not new GLSL. One wiring detail: `fill-sampled-links.vert`
+calls `conicParametricCurve`, so whatever compiles it has to splice the helper
+in the way `Lines` does — `withShaderModules(source, conicParametricCurveGLSL)`.
 
 The larger gap is that **nothing here has run on physical hardware.** The tests
 verify logic and wiring against a mock context; they have never compiled a

@@ -90,7 +90,11 @@ uniform float greyoutOpacity;
 uniform float curvedWeight;
 uniform float curvedLinkControlPointDistance;
 uniform float curvedLinkSegments;
-uniform bool scaleLinksOnZoom;
+// A float, not a bool: the shader body compares it against 0.0 so that the same
+// expression works against the uniform-block branch above, where std140 has no
+// bool. Declaring it `bool` here is a GLSL ES 3.00 type error (`bool > float`)
+// that some desktop drivers accept and Adreno/Mali reject outright.
+uniform float scaleLinksOnZoom;
 uniform float maxPointSize;
 // renderMode: 0.0 = normal rendering, 1.0 = index buffer rendering for picking
 uniform float renderMode;

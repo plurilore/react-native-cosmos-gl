@@ -30,6 +30,15 @@ jobs:
             echo "::error::src/core/shaders/generated/ is out of date — run 'npm run shaders' and commit the result."
             exit 1
           }
+      - name: Compile every shader
+        # The mock GL in the test suite links programs without compiling GLSL,
+        # and desktop drivers accept type errors that Adreno and Mali reject —
+        # so the reference compiler is the only thing standing between a GLSL
+        # mistake and a black canvas on a phone.
+        run: |
+          npm run shaders:tools
+          npm run shaders:validate
+
       - name: Typecheck the example
         # The example is the only place the public API is consumed the way a
         # user consumes it, so this catches an export that typechecks inside

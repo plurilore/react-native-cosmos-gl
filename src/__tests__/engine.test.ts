@@ -84,6 +84,28 @@ describe('shader sources', () => {
     }
   })
 
+  it('never compares a bool uniform against a number', () => {
+    // GLSL ES 3.00 has no bool→float conversion, so `someBool > 0.0` is a
+    // compile error. Desktop drivers have been seen to accept it; Adreno and
+    // Mali reject the shader outright and the canvas goes black. The engine
+    // sets every scalar uniform as a number, so the flag uniforms are floats
+    // compared against 0.0 — and a std140 block has no bool to mirror anyway.
+    //
+    // A full type check needs the reference compiler (`npm run shaders:validate`);
+    // this covers the one mistake that has actually shipped, without a binary.
+    for (const [name, source] of allShaders) {
+      const bools = [...source.matchAll(/\buniform\s+bool\s+([^;]+);/g)]
+        .flatMap((match) => (match[1] as string).split(',').map((part) => part.trim()))
+      for (const uniform of bools) {
+        const compared = new RegExp(`\\b${uniform}\\s*(?:[<>]=?|[!=]=)\\s*[-\\d.]|[-\\d.]\\s*(?:[<>]=?|[!=]=)\\s*\\b${uniform}\\b`)
+        expect(
+          compared.test(source),
+          `${name} compares the bool uniform '${uniform}' against a number — declare it float`
+        ).toBe(false)
+      }
+    }
+  })
+
   it('bakes a positive loop bound into the link spring shader', () => {
     // GLSL requires a constant loop bound; a zero or NaN bound would silently
     // drop the link force entirely.
