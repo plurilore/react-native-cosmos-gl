@@ -110,18 +110,5 @@
   },
   "publishConfig": {
     "access": "public"
-  },
-  "exports": {
-    ".": {
-      "types": "./lib/typescript/index.d.ts",
-      "react-native": "./src/index.ts",
-      "default": "./lib/commonjs/index.js"
-    },
-    "./skia": {
-      "types": "./lib/typescript/skia/index.d.ts",
-      "react-native": "./src/skia/index.ts",
-      "default": "./lib/commonjs/skia/index.js"
-    },
-    "./package.json": "./package.json"
   }
 }
