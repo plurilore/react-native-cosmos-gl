@@ -16,6 +16,8 @@ export type PackedAtlas = {
   sprites: PackedSprite[]
   width: number
   height: number
+  /** How many labels actually got a slot; the rest exceeded the budget. */
+  placed: number
 }
 
 /**
@@ -30,29 +32,52 @@ export type PackedAtlas = {
 export function packLabels (
   labels: readonly { width: number; height: number }[],
   capacity: number,
-  width: number
+  width: number,
+  maxHeight = DEFAULT_MAX_HEIGHT
 ): PackedAtlas {
   const sprites: PackedSprite[] = []
   let cursorX = 0
   let cursorY = 0
   let rowHeight = 0
+  let placed = 0
 
   for (const label of labels.slice(0, capacity)) {
+    // Integers throughout: a sprite whose origin lands on a half pixel is
+    // resampled even when the atlas is drawn at exactly 1:1, which is the
+    // whole point of the physical-pixel layout.
+    const labelWidth = Math.ceil(label.width)
+    const labelHeight = Math.ceil(label.height)
+
     // A label wider than the whole atlas still gets a slot rather than looping
     // forever looking for room; `cursorX > 0` is what stops that.
-    if (cursorX + label.width > width && cursorX > 0) {
+    if (cursorX + labelWidth > width && cursorX > 0) {
       cursorX = 0
       cursorY += rowHeight
       rowHeight = 0
     }
-    sprites.push({ x: cursorX, y: cursorY, width: label.width, height: label.height })
-    cursorX += label.width
-    rowHeight = Math.max(rowHeight, label.height)
+
+    // Past the budget, drop the rest. The texture is a real GPU allocation and
+    // the library asserts it is non-null, so an atlas that outgrows the
+    // device's limit is a crash rather than a missing label.
+    if (cursorY + labelHeight > maxHeight) break
+
+    sprites.push({ x: cursorX, y: cursorY, width: labelWidth, height: labelHeight })
+    cursorX += labelWidth
+    rowHeight = Math.max(rowHeight, labelHeight)
+    placed++
   }
 
-  const height = Math.max(1, cursorY + rowHeight)
+  const height = Math.max(1, Math.min(maxHeight, cursorY + rowHeight))
   while (sprites.length < capacity) sprites.push(EMPTY_SPRITE)
-  return { sprites, width, height }
+  return { sprites, width, height, placed }
 }
+
+/**
+ * How tall the atlas may grow, in physical pixels.
+ *
+ * Paired with a width of the same order this stays well inside the 4096 limit
+ * of the oldest GPUs likely to run this, with room for a 3× device.
+ */
+export const DEFAULT_MAX_HEIGHT = 2048
 
 const EMPTY_SPRITE: PackedSprite = { x: 0, y: 0, width: 0, height: 0 }

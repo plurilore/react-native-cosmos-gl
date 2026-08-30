@@ -136,3 +136,38 @@ describe('viewport sampling', () => {
     graph.destroy()
   })
 })
+
+describe('drawn frames', () => {
+  it('reports each frame that was actually drawn', () => {
+    const graph = makeGraph()
+    const drawn: number[] = []
+    const unsubscribe = graph.onFrame((now) => drawn.push(now))
+
+    graph.render([0, 0, 800, 600])
+    graph.render([0, 0, 800, 600])
+    expect(drawn).toHaveLength(2)
+    expect(drawn.every((now) => Number.isFinite(now))).toBe(true)
+
+    unsubscribe()
+    graph.render([0, 0, 800, 600])
+    expect(drawn).toHaveLength(2)
+    graph.destroy()
+  })
+
+  it('is silent while the graph is parked', () => {
+    // The reason this exists rather than a host-side animation loop: an idle
+    // graph draws nothing, and a frame counter should say so instead of
+    // reporting callbacks nobody rendered.
+    const graph = makeGraph()
+    settle(graph)
+    const drawn: number[] = []
+    graph.onFrame(() => drawn.push(1))
+    expect(graph.needsFrame).toBe(false)
+    expect(drawn).toHaveLength(0)
+
+    graph.invalidate()
+    graph.render([0, 0, 800, 600])
+    expect(drawn).toHaveLength(1)
+    graph.destroy()
+  })
+})

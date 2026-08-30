@@ -312,6 +312,8 @@ export type CosmosGraphRef = {
   needsFrame: () => boolean
   /** Marks the picture out of date, waking the frame loop. */
   invalidate: () => void
+  /** Subscribes to drawn frames. Returns an unsubscribe. */
+  onFrame: (listener: (now: number) => void) => () => void
   /** Simulation space to screen pixels, under the current view transform. */
   spaceToScreenPosition: (position: [number, number]) => [number, number]
   /** Screen pixels to simulation space, under the current view transform. */
@@ -689,6 +691,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     onViewTransform: (listener) => graphRef.current?.onViewTransform(listener) ?? (() => undefined),
     needsFrame: () => graphRef.current?.needsFrame ?? false,
     invalidate: () => graphRef.current?.invalidate(),
+    onFrame: (listener) => graphRef.current?.onFrame(listener) ?? (() => undefined),
     spaceToScreenPosition: (position) => graphRef.current?.spaceToScreenPosition(position) ?? position,
     screenToSpacePosition: (position) => graphRef.current?.screenToSpacePosition(position) ?? position,
     getPointPositions: () => graphRef.current?.getPointPositions() ?? new Float32Array(),

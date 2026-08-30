@@ -81,6 +81,7 @@ export class Graph {
   private hasFitViewOnInitRun = false
   private readonly viewTransformListeners = new Set<(transform: ViewProjection) => void>()
   private readonly invalidateListeners = new Set<() => void>()
+  private readonly frameListeners = new Set<(now: number) => void>()
   /** Set whenever something that changes the picture happens. */
   private isFrameNeeded = true
 
@@ -337,6 +338,11 @@ export class Graph {
     // Cleared last: anything set during this frame's data or simulation work
     // has already been consumed by it.
     this.isFrameNeeded = false
+
+    if (this.frameListeners.size > 0) {
+      const drawnAt = currentTime()
+      for (const listener of this.frameListeners) listener(drawnAt)
+    }
   }
 
   /** Starts (or restarts) the simulation with a full alpha. */
@@ -998,6 +1004,22 @@ export class Graph {
     this.invalidateListeners.add(listener)
     return () => {
       this.invalidateListeners.delete(listener)
+    }
+  }
+
+  /**
+   * Called after each frame is drawn. Returns an unsubscribe.
+   *
+   * The counterpart to `needsFrame`: a host measuring frame rate wants the
+   * frames that were *drawn*, not the animation callbacks the platform
+   * scheduled. Those differ precisely when the graph is idle and skipping —
+   * which is exactly when a second `requestAnimationFrame` loop of one's own
+   * would both mismeasure and defeat the scheduling this pairs with.
+   */
+  public onFrame (listener: (now: number) => void): () => void {
+    this.frameListeners.add(listener)
+    return () => {
+      this.frameListeners.delete(listener)
     }
   }
 

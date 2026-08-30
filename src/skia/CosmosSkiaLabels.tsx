@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { StyleSheet } from 'react-native'
+import { PixelRatio, StyleSheet } from 'react-native'
 import {
   Atlas,
   Canvas,
@@ -19,9 +19,12 @@ import {
   createLabelLayoutBuffers,
   layoutLabels,
   packLabels,
+  labelAtlasMetrics,
+  labelSpriteTransform,
   toLabelPlacement,
   EMPTY_LABEL_PLACEMENT,
   type LabelPlacement,
+  type LabelAtlasMetrics,
   type LabelLayoutBuffers,
   type LabelPolicy,
   type MeasuredLabel,
@@ -68,8 +71,17 @@ const DEFAULT_FONT_SIZE = 12
 const DEFAULT_MARGIN = 7
 const DEFAULT_PADDING = [5, 3, 5, 3] as const
 const DEFAULT_INTERVAL = 90
-/** Atlas texture width; rows wrap within it. */
-const ATLAS_WIDTH = 1024
+
+/**
+ * Atlas texture width in physical pixels; rows wrap within it.
+ *
+ * Scaled with the device so a dense screen does not simply stack three times
+ * as many rows, and capped at 2048 — half the smallest texture limit any GPU
+ * likely to run this reports, which leaves the height budget the same room.
+ */
+function atlasWidth (pixelRatio: number): number {
+  return Math.max(1024, Math.min(2048, Math.round(1024 * pixelRatio)))
+}
 
 type BakedAtlas = {
   picture: SkPicture
@@ -115,11 +127,29 @@ export function CosmosSkiaLabels ({
 }: CosmosSkiaLabelsProps): React.ReactElement | null {
   const { graph, resolved, isReady, selectedPointIndices } = useCosmosGraph()
 
+  /**
+   * Everything inside the atlas is in physical pixels.
+   *
+   * An offscreen Skia surface draws under an identity transform, while a
+   * `<Canvas>` scales by the device ratio first — so a font baked at a logical
+   * size is rasterized at a fraction of the resolution it is displayed at, and
+   * the atlas can only upscale it. Baking at `fontSize × ratio` and drawing the
+   * sprite back down at `1 / ratio` puts a texel on a device pixel.
+   */
+  const pixelRatio = PixelRatio.get()
+  const metrics = useMemo(
+    () => labelAtlasMetrics({ fontSize, padding, margin, pixelRatio }),
+    [fontSize, padding, margin, pixelRatio]
+  )
+
   // A caller may hand over a loaded font or the file to load. Hooks cannot be
   // called conditionally, so `useFont` always runs and gets null when there is
   // nothing for it to do.
   const isLoadedFont = isSkFont(fontSource)
-  const loadedFont = useFont(isLoadedFont ? null : (fontSource as Parameters<typeof useFont>[0]), fontSize)
+  const loadedFont = useFont(
+    isLoadedFont ? null : (fontSource as Parameters<typeof useFont>[0]),
+    metrics.fontSize
+  )
   const font = isLoadedFont ? (fontSource as SkFont) : loadedFont
 
   const [manager] = useState(() => new LabelManager())
@@ -148,14 +178,21 @@ export function CosmosSkiaLabels ({
    */
   const placement = useSharedValue<LabelPlacement>(EMPTY_LABEL_PLACEMENT)
 
+  // Physical pixels, because the font is. Cached per string by the manager, so
+  // this runs once per new label rather than per frame.
   const measure = useCallback((label: { text: string }) => {
-    if (!font) return { width: label.text.length * fontSize * 0.55, height: fontSize }
+    if (!font) {
+      return {
+        width: label.text.length * metrics.fontSize * 0.55,
+        height: metrics.lineHeight,
+      }
+    }
     const bounds = font.measureText(label.text)
     return {
-      width: bounds.width + padding[0] + padding[2],
-      height: fontSize + padding[1] + padding[3],
+      width: Math.ceil(bounds.width) + metrics.padding[0] + metrics.padding[2],
+      height: metrics.lineHeight,
     }
-  }, [font, fontSize, padding])
+  }, [font, metrics])
 
   const policyKey = JSON.stringify(policy)
   const selectedKey = (selectedPointIndices ?? []).join(',')
@@ -184,19 +221,19 @@ export function CosmosSkiaLabels ({
       measure,
     }).slice(0, MAX_LABELS)
 
-    fillBuffers(buffers, selected, anchors, sampled, clusters, margin)
+    fillBuffers(buffers, selected, anchors, sampled, clusters, metrics)
     // Collide here, against the camera as it stands. A pan cannot change which
     // labels overlap — it moves them all equally — so this only goes stale
     // under zoom, and never for longer than one interval.
     layoutLabels(buffers, graph.getViewProjection())
-    setAtlas(bakeAtlas(selected, font, fontSize, color, chipColor, padding))
+    setAtlas(bakeAtlas(selected, font, metrics, color, chipColor))
     placement.value = toLabelPlacement(buffers)
     onMeasure?.(Date.now() - startedAt, selected.length)
     // `policy` is spread from props and rebuilt every render; `policyKey` is
     // its content, which is what decides the outcome.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    graph, isReady, font, fontSize, color, chipColor, padding, margin, measure,
+    graph, isReady, font, metrics, color, chipColor, measure,
     manager, buffers, resolved, selectedKey, policyKey, clusters, placement, onMeasure,
   ])
 
@@ -264,6 +301,7 @@ export function CosmosSkiaLabels ({
     'worklet'
     const projection = view.value
     const placed = placement.value
+    const ratio = pixelRatio
 
     if (index >= placed.count || placed.visible[index] !== 1) {
       xform.set(1, 0, PARKED, PARKED)
@@ -277,12 +315,17 @@ export function CosmosSkiaLabels ({
     )
     const width = placed.sizes[index * 2] as number
     const height = placed.sizes[index * 2 + 1] as number
-    // The sprite draws from its top-left and the anchor names the point, so
-    // the label sits centred above it. `height` already carries the margin.
-    xform.set(1, 0, screenX - width / 2, screenY - height)
+    const sprite = labelSpriteTransform(screenX, screenY, width, height, ratio)
+    xform.set(sprite.scale, 0, sprite.tx, sprite.ty)
   })
 
-  const texture = usePictureAsTexture(atlas?.picture ?? null, atlas?.size ?? UNIT_SIZE)
+  // Reference-compared by the texture hook, so an inline object would discard
+  // and reallocate a GPU surface on every render.
+  const textureSize = useMemo(
+    () => ({ width: atlas?.size.width ?? 1, height: atlas?.size.height ?? 1 }),
+    [atlas?.size.width, atlas?.size.height]
+  )
+  const texture = usePictureAsTexture(atlas?.picture ?? null, textureSize)
 
   if (!font || !atlas) return null
 
@@ -304,15 +347,14 @@ export function CosmosSkiaLabels ({
 export function bakeAtlas (
   labels: readonly MeasuredLabel[],
   font: SkFont,
-  fontSize: number,
+  metrics: LabelAtlasMetrics,
   color: string,
-  chipColor: string | undefined,
-  padding: readonly [number, number, number, number]
+  chipColor: string | undefined
 ): BakedAtlas {
   // Padded to the pool size, not to the label count. The native atlas requires
   // the sprite and transform arrays to be the same length and throws if they
   // are not — on every commit, which React then repeats.
-  const packed = packLabels(labels, MAX_LABELS, ATLAS_WIDTH)
+  const packed = packLabels(labels, MAX_LABELS, atlasWidth(metrics.pixelRatio))
   const sprites: SkRect[] = packed.sprites.map((sprite) =>
     Skia.XYWHRect(sprite.x, sprite.y, sprite.width, sprite.height)
   )
@@ -320,24 +362,35 @@ export function bakeAtlas (
   const size = { width: packed.width, height: packed.height }
   const textPaint = Skia.Paint()
   textPaint.setColor(Skia.Color(color))
+  textPaint.setAntiAlias(true)
   const chipPaint = Skia.Paint()
+  chipPaint.setAntiAlias(true)
   if (chipColor) chipPaint.setColor(Skia.Color(chipColor))
 
+  // Baked large and drawn back down, so advances must stay linear or the
+  // measured widths stop matching the glyphs that were rasterized.
+  font.setSubpixel(true)
+  font.setLinearMetrics(true)
+
   const picture = createPicture((canvas) => {
-    labels.forEach((label, index) => {
+    // Only what the packer placed; anything past its budget has no slot.
+    labels.slice(0, packed.placed).forEach((label, index) => {
       const sprite = sprites[index]
       if (!sprite) return
       if (chipColor) {
         canvas.drawRRect(
-          Skia.RRectXY(Skia.XYWHRect(sprite.x, sprite.y, label.width, label.height), 4, 4),
+          Skia.RRectXY(
+            Skia.XYWHRect(sprite.x, sprite.y, sprite.width, sprite.height),
+            metrics.radius,
+            metrics.radius
+          ),
           chipPaint
         )
       }
       canvas.drawText(
         label.text,
-        sprite.x + padding[0],
-        // Baseline: the top padding plus most of the em box.
-        sprite.y + padding[1] + fontSize * 0.82,
+        sprite.x + metrics.padding[0],
+        sprite.y + metrics.baseline,
         textPaint,
         font
       )
@@ -347,15 +400,24 @@ export function bakeAtlas (
   return { picture, size, sprites }
 }
 
-/** Copies the selected labels into the flat buffers the layout pass reads. */
+/**
+ * Copies the selected labels into the flat buffers the layout pass reads.
+ *
+ * The measured sizes arrive in physical pixels, because the atlas is baked in
+ * them, and are divided back down here: collision and projection both work in
+ * the logical screen space `ViewProjection` reports, and mixing the two would
+ * inflate every collision box by the device ratio.
+ */
 export function fillBuffers (
   buffers: LabelLayoutBuffers,
   labels: readonly MeasuredLabel[],
   anchors: Map<number, [number, number]>,
   sampled: Map<number, [number, number]>,
   clusters: CosmosSkiaLabelsProps['clusters'],
-  margin: number
+  metrics: LabelAtlasMetrics
 ): void {
+  const { pixelRatio } = metrics
+  const margin = metrics.margin / pixelRatio
   buffers.count = labels.length
   labels.forEach((label, index) => {
     const position =
@@ -364,10 +426,10 @@ export function fillBuffers (
         : anchors.get(label.index) ?? sampled.get(label.index) ?? label.position
     buffers.anchors[index * 2] = position[0]
     buffers.anchors[index * 2 + 1] = position[1]
-    buffers.sizes[index * 2] = label.width
+    buffers.sizes[index * 2] = label.width / pixelRatio
     // The margin lifts the label clear of the point it names; folding it into
     // the height keeps the collision box and the drawn position agreeing.
-    buffers.sizes[index * 2 + 1] = label.height + margin
+    buffers.sizes[index * 2 + 1] = label.height / pixelRatio + margin
     buffers.priorities[index] = label.priority
     buffers.forced[index] = label.forceShow ? 1 : 0
   })
@@ -379,7 +441,6 @@ function isSkFont (value: unknown): value is SkFont {
   return typeof value === 'object' && value !== null && 'measureText' in value
 }
 
-const UNIT_SIZE = { width: 1, height: 1 }
 const EMPTY_VIEW: ViewProjection = {
   k: 1, x: 0, y: 0, offsetX: 0, offsetY: 0, spaceSize: 0, screenWidth: 0, screenHeight: 0,
 }

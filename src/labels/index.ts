@@ -14,7 +14,14 @@ export {
 } from './layout'
 export { collectCandidates, trackedPointIndices, type LabelSource } from './candidates'
 export { resolveCollisions } from './collision'
-export { packLabels, type PackedAtlas, type PackedSprite } from './packing'
+export { packLabels, DEFAULT_MAX_HEIGHT, type PackedAtlas, type PackedSprite } from './packing'
+export {
+  labelAtlasMetrics,
+  labelSpriteTransform,
+  snapToPixel,
+  type LabelAtlasMetrics,
+  type LabelSpriteTransform,
+} from './metrics'
 export {
   prioritise,
   clusterPriority,
