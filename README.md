@@ -269,6 +269,8 @@ knowing first:
 | `pointOcclusionCulling` | `true` | Depth-rejects hidden points before shading. |
 | `enableDrag` | `false` | A pan starting on a point moves that point. |
 | `scaleExtent` | `[0.001, Infinity]` | Hard `[min, max]` zoom range. Every path into the view respects it. |
+| `pointSizeStrategy` | inferred | `auto` for the Cosmograph-compatible curve; `continuous` (the default when a column is given) is a square root over a percentile band. |
+| `linkWidthStrategy` | `direct` | `sum` totals the width column per ordered source→target pair before encoding. |
 | `simulationRestartAlpha` | `1` | Energy a position update restarts the layout with. Low values grow a graph without re-annealing it. |
 | `simulationCluster` | `0.1` | Pull toward a point's cluster centroid. |
 | `simulationCollision` | `0` | Overlap avoidance. `0` skips the grid entirely. |
@@ -277,6 +279,83 @@ knowing first:
 Callbacks (`onPointClick`, `onZoom`, `onSimulationTick`, …) receive a
 `CosmosPointerEvent` rather than a DOM event, produced identically from touch,
 pen and mouse.
+
+## Matching a graph drawn by Cosmograph
+
+Cosmograph is a product built on cosmos.gl, and it makes choices cosmos.gl
+does not. This package ports cosmos.gl, so its defaults are cosmos.gl's — to
+match a Cosmograph canvas you opt in:
+
+```tsx
+<CosmosGraph
+  pointSizeBy="displaySize"  pointSizeStrategy="auto"  pointSizeRange={[8, 30]}
+  linkWidthBy="displayWidth" linkWidthStrategy="sum"   linkWidthRange={[0.8, 4]}
+  linkStrengthBy="strength"                            linkStrengthRange={[0.2, 1]}
+  // Cosmograph's own overrides on top of cosmos.gl's defaults.
+  simulationLinkSpring={0.4}
+  hoveredLinkWidthIncrease={0}
+  pointSamplingDistance={125}
+/>
+```
+
+Three things are easy to get wrong, because none of them is linear:
+
+- **Point size** under `auto` is a symmetric-log scale over the column's 5th
+  to 95th percentile, clamped. A value halfway along the domain lands well
+  above halfway along the range.
+- **Link width** under `sum` is aggregated *before* encoding, by **ordered**
+  pair — `A→B` and `B→A` are different connections — and the total is then
+  symlog-scaled. An authored width is not a pixel width.
+- **Link strength** is symlog-scaled over the column's full extent into
+  `linkStrengthRange`. Authored `0.22` and `0.68` reach the simulation as
+  `0.2` and `1.0`.
+
+## Labels
+
+`src/labels/` decides *what* should be drawn — candidates, priority bands,
+collision — and knows nothing about drawing. Two renderers consume it:
+
+```tsx
+import { CosmosSkiaLabels } from 'react-native-cosmos-gl/skia'
+
+<CosmosGraph …>
+  <CosmosSkiaLabels font={require('./Inter.ttf')} showTopLabels showDynamicLabels />
+</CosmosGraph>
+```
+
+`CosmosSkiaLabels` needs `@shopify/react-native-skia` — an optional peer
+dependency, so the GL engine still requires nothing but expo-gl. Prefer it:
+`<CosmosLabels>` renders one React Native view per label, and on device the
+compositing cost of that is real. Measured on a mid-range Android phone with
+the simulation and links switched off, fifty labels took a graph from 90fps to
+40. Views are composited every frame, so throttling the updates does not reach
+it; one canvas does.
+
+Two rules the label layer follows that are worth knowing:
+
+- **Cluster labels and point labels are alternatives.** With nothing selected
+  the clusters name the regions; the moment anything is selected they give way
+  to the points. Forced (`showLabelsFor`) and custom labels survive both.
+- **Anchors and text move on different clocks.** Positions come from the GPU
+  only while the simulation runs; the camera moves the anchors at display rate
+  through `onViewTransform`, and never scales the glyphs.
+
+## Drawing only when there is something to draw
+
+`needsFrame`, `invalidate()` and `onInvalidate()` let a host stop its frame
+loop. A settled graph with a stationary camera renders an identical frame
+forever otherwise, which on a phone is battery and heat for no picture — and
+time taken from anything else sharing the surface. `<CosmosGraph>` does this
+for you; a custom host should too:
+
+```ts
+const frame = () => {
+  graph.render(viewport)
+  gl.endFrameEXP()
+  if (graph.needsFrame) requestAnimationFrame(frame)
+}
+graph.onInvalidate(() => requestAnimationFrame(frame))
+```
 
 ## Performance notes
 
@@ -295,10 +374,9 @@ pen and mouse.
 - **Avoid reading back.** `getPointPositions()` stalls the GPU pipeline. It is
   fine on a tap; it is not fine per frame.
 - **The frame loop is on the JS thread**, so anything else on it is paid in
-  frames. That is what makes label overlays the usual cost on a busy screen:
-  `<CosmosLabels>` re-places on a timer and skips the re-render when nothing
-  moved, but a host that re-renders the graph's parent every frame will still
-  starve it.
+  frames. That is what makes label overlays the usual cost on a busy screen —
+  use `CosmosSkiaLabels` rather than `CosmosLabels` where you can, and keep the
+  graph's parent from re-rendering per frame.
 - **Adding points should not re-anneal the layout.** A position update restarts
   the simulation at `simulationRestartAlpha`; leave it at `1` when the data is
   replaced, and drop it to ~0.25 when the graph merely grew, so the nodes
