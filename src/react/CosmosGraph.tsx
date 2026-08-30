@@ -97,6 +97,17 @@ export type CosmosGraphProps = GraphConfig & {
   linkSourceBy?: string
   /** Column naming each link's target point. */
   linkTargetBy?: string
+  /**
+   * Columns holding each link's endpoints as point *indices*.
+   *
+   * The fast path when a caller already knows them: resolving an endpoint
+   * becomes a bounds check rather than a hash lookup. Both must be present, and
+   * they take precedence over the id columns.
+   */
+  linkSourceIndexBy?: string
+  linkTargetIndexBy?: string
+  /** Column holding each point's own index, when the caller already knows it. */
+  pointIndexBy?: string
 
   /** Columns holding precomputed coordinates. Both must be present to be used. */
   pointXBy?: string
@@ -348,7 +359,8 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     pointPositions, links, pointColors, pointSizes, pointShapes, pointImages,
     linkColors, linkWidths, linkStyles, linkArrows, linkStrength, pinnedPoints,
     pointClusters, clusterPositions, pointClusterStrength,
-    pointData, linkData, pointIdBy, linkSourceBy, linkTargetBy, pointXBy, pointYBy,
+    pointData, linkData, pointIdBy, pointIndexBy, linkSourceBy, linkTargetBy,
+    linkSourceIndexBy, linkTargetIndexBy, pointXBy, pointYBy,
     pointColorBy, pointColorStrategy, pointColorPalette, pointColorMap, pointColorByFn,
     pointColorMidpoint, pointSizeBy, pointSizeStrategy, pointSizeRange, pointSizeByFn,
     pointLabelBy, pointLabelWeightBy, pointShapeBy,
@@ -386,7 +398,8 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
   const resolved = useMemo(() => {
     if (!pointData) return undefined
     return resolveGraphData({
-      pointData, linkData, pointIdBy, linkSourceBy, linkTargetBy, pointXBy, pointYBy,
+      pointData, linkData, pointIdBy, pointIndexBy, linkSourceBy, linkTargetBy,
+    linkSourceIndexBy, linkTargetIndexBy, pointXBy, pointYBy,
       pointColorBy, pointColorStrategy, pointColorPalette, pointColorMap, pointColorByFn,
       pointColorMidpoint, pointSizeBy, pointSizeStrategy, pointSizeRange, pointSizeByFn,
       pointLabelBy, pointLabelWeightBy, pointShapeBy,
@@ -398,7 +411,8 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
       pointDefaultSize: config.pointDefaultSize,
     } satisfies GraphDataMapping)
   }, [
-    pointData, linkData, pointIdBy, linkSourceBy, linkTargetBy, pointXBy, pointYBy,
+    pointData, linkData, pointIdBy, pointIndexBy, linkSourceBy, linkTargetBy,
+    linkSourceIndexBy, linkTargetIndexBy, pointXBy, pointYBy,
     pointColorBy, pointColorStrategy, pointColorPalette, pointColorMap, pointColorByFn,
     pointColorMidpoint, pointSizeBy, pointSizeStrategy, pointSizeRange, pointSizeByFn,
     pointLabelBy, pointLabelWeightBy, pointShapeBy,
