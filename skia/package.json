@@ -1,9 +1,8 @@
 {
   "name": "react-native-cosmos-gl-skia",
   "private": true,
-  "description": "Subpath stub. Metro and other legacy resolvers look for a folder here rather than reading the parent's exports map, so this points them at the same files that map names.",
-  "main": "../lib/commonjs/skia/index.js",
-  "module": "../lib/module/skia/index.js",
-  "react-native": "../src/skia/index.ts",
-  "types": "../lib/typescript/skia/index.d.ts"
+  "description": "Subpath stub. Resolvers look for a folder here rather than an exports map; the entry files beside this one re-export the real implementation. Paths stay inside the folder because Metro will not follow a main field that escapes it.",
+  "main": "index.js",
+  "react-native": "index.ts",
+  "types": "index.d.ts"
 }
