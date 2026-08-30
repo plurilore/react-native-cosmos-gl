@@ -3,32 +3,26 @@ import { PixelRatio, StyleSheet } from 'react-native'
 import {
   Atlas,
   Canvas,
-  Skia,
-  createPicture,
   useFont,
   usePictureAsTexture,
   useRSXformBuffer,
   type SkFont,
-  type SkPicture,
-  type SkRect,
 } from '@shopify/react-native-skia'
 import { useSharedValue } from 'react-native-reanimated'
 import { useCosmosGraph } from '../react/CosmosGraph'
 import {
   LabelManager,
   createLabelLayoutBuffers,
+  fillBuffers,
   layoutLabels,
-  packLabels,
   labelAtlasMetrics,
   labelSpriteTransform,
   toLabelPlacement,
   EMPTY_LABEL_PLACEMENT,
   type LabelPlacement,
-  type LabelAtlasMetrics,
-  type LabelLayoutBuffers,
   type LabelPolicy,
-  type MeasuredLabel,
 } from '../labels'
+import { MAX_LABELS, bakeAtlas, configureFont, type BakedAtlas } from './bake'
 import { projectViewPoint, type ViewProjection } from '../core/view-projection'
 
 export type CosmosSkiaLabelsProps = LabelPolicy & {
@@ -55,15 +49,6 @@ export type CosmosSkiaLabelsProps = LabelPolicy & {
   onMeasure?: (durationMs: number, count: number) => void
 }
 
-/**
- * The most labels drawn at once.
- *
- * Fixed, because the atlas requires its sprite and transform arrays to be the
- * same length, and the transform buffer allocates once for a stable size.
- * Unused slots are parked off-screen rather than removed.
- */
-const MAX_LABELS = 160
-
 /** Where a parked slot goes. Far enough that no viewport can contain it. */
 const PARKED = -100_000
 
@@ -71,23 +56,6 @@ const DEFAULT_FONT_SIZE = 12
 const DEFAULT_MARGIN = 7
 const DEFAULT_PADDING = [5, 3, 5, 3] as const
 const DEFAULT_INTERVAL = 90
-
-/**
- * Atlas texture width in physical pixels; rows wrap within it.
- *
- * Scaled with the device so a dense screen does not simply stack three times
- * as many rows, and capped at 2048 — half the smallest texture limit any GPU
- * likely to run this reports, which leaves the height budget the same room.
- */
-function atlasWidth (pixelRatio: number): number {
-  return Math.max(1024, Math.min(2048, Math.round(1024 * pixelRatio)))
-}
-
-type BakedAtlas = {
-  picture: SkPicture
-  size: { width: number; height: number }
-  sprites: SkRect[]
-}
 
 /**
  * Graph labels drawn as one atlas.
@@ -153,6 +121,22 @@ export function CosmosSkiaLabels ({
   const font = isLoadedFont ? (fontSource as SkFont) : loadedFont
 
   const [manager] = useState(() => new LabelManager())
+
+  /**
+   * Configure the font, and forget anything measured with the old one.
+   *
+   * Both halves matter. The font is mutated, so it has to be set up before the
+   * first pass measures with it — a font configured mid-flight would draw
+   * glyphs at widths the layout had already collided against. And measurements
+   * are cached per string with no note of the font that produced them, so a
+   * size change (the device ratio is part of it) would otherwise keep serving
+   * widths from the previous one.
+   */
+  useEffect(() => {
+    if (!font) return
+    configureFont(font)
+    manager.reset()
+  }, [font, manager])
   const buffers = useMemo(() => createLabelLayoutBuffers(MAX_LABELS), [])
   const [atlas, setAtlas] = useState<BakedAtlas | null>(null)
 
@@ -226,7 +210,7 @@ export function CosmosSkiaLabels ({
     // labels overlap — it moves them all equally — so this only goes stale
     // under zoom, and never for longer than one interval.
     layoutLabels(buffers, graph.getViewProjection())
-    setAtlas(bakeAtlas(selected, font, metrics, color, chipColor))
+    setAtlas(bakeAtlas(selected, metrics, font, color, chipColor))
     placement.value = toLabelPlacement(buffers)
     onMeasure?.(Date.now() - startedAt, selected.length)
     // `policy` is spread from props and rebuilt every render; `policyKey` is
@@ -336,104 +320,6 @@ export function CosmosSkiaLabels ({
       <Atlas image={texture} sprites={atlas.sprites} transforms={transforms} />
     </Canvas>
   )
-}
-
-/**
- * Draws every label once into a single picture, recording where each landed.
- *
- * One texture rather than one per label: the atlas draws them all in a single
- * call, and a call per label would put the cost back where it came from.
- */
-export function bakeAtlas (
-  labels: readonly MeasuredLabel[],
-  font: SkFont,
-  metrics: LabelAtlasMetrics,
-  color: string,
-  chipColor: string | undefined
-): BakedAtlas {
-  // Padded to the pool size, not to the label count. The native atlas requires
-  // the sprite and transform arrays to be the same length and throws if they
-  // are not — on every commit, which React then repeats.
-  const packed = packLabels(labels, MAX_LABELS, atlasWidth(metrics.pixelRatio))
-  const sprites: SkRect[] = packed.sprites.map((sprite) =>
-    Skia.XYWHRect(sprite.x, sprite.y, sprite.width, sprite.height)
-  )
-
-  const size = { width: packed.width, height: packed.height }
-  const textPaint = Skia.Paint()
-  textPaint.setColor(Skia.Color(color))
-  textPaint.setAntiAlias(true)
-  const chipPaint = Skia.Paint()
-  chipPaint.setAntiAlias(true)
-  if (chipColor) chipPaint.setColor(Skia.Color(chipColor))
-
-  // Baked large and drawn back down, so advances must stay linear or the
-  // measured widths stop matching the glyphs that were rasterized.
-  font.setSubpixel(true)
-  font.setLinearMetrics(true)
-
-  const picture = createPicture((canvas) => {
-    // Only what the packer placed; anything past its budget has no slot.
-    labels.slice(0, packed.placed).forEach((label, index) => {
-      const sprite = sprites[index]
-      if (!sprite) return
-      if (chipColor) {
-        canvas.drawRRect(
-          Skia.RRectXY(
-            Skia.XYWHRect(sprite.x, sprite.y, sprite.width, sprite.height),
-            metrics.radius,
-            metrics.radius
-          ),
-          chipPaint
-        )
-      }
-      canvas.drawText(
-        label.text,
-        sprite.x + metrics.padding[0],
-        sprite.y + metrics.baseline,
-        textPaint,
-        font
-      )
-    })
-  }, Skia.XYWHRect(0, 0, size.width, size.height))
-
-  return { picture, size, sprites }
-}
-
-/**
- * Copies the selected labels into the flat buffers the layout pass reads.
- *
- * The measured sizes arrive in physical pixels, because the atlas is baked in
- * them, and are divided back down here: collision and projection both work in
- * the logical screen space `ViewProjection` reports, and mixing the two would
- * inflate every collision box by the device ratio.
- */
-export function fillBuffers (
-  buffers: LabelLayoutBuffers,
-  labels: readonly MeasuredLabel[],
-  anchors: Map<number, [number, number]>,
-  sampled: Map<number, [number, number]>,
-  clusters: CosmosSkiaLabelsProps['clusters'],
-  metrics: LabelAtlasMetrics
-): void {
-  const { pixelRatio } = metrics
-  const margin = metrics.margin / pixelRatio
-  buffers.count = labels.length
-  labels.forEach((label, index) => {
-    const position =
-      label.kind === 'cluster'
-        ? clusters?.find((cluster) => cluster.index === label.index)?.position ?? label.position
-        : anchors.get(label.index) ?? sampled.get(label.index) ?? label.position
-    buffers.anchors[index * 2] = position[0]
-    buffers.anchors[index * 2 + 1] = position[1]
-    buffers.sizes[index * 2] = label.width / pixelRatio
-    // The margin lifts the label clear of the point it names; folding it into
-    // the height keeps the collision box and the drawn position agreeing.
-    buffers.sizes[index * 2 + 1] = label.height / pixelRatio + margin
-    buffers.priorities[index] = label.priority
-    buffers.forced[index] = label.forceShow ? 1 : 0
-  })
-  for (let i = labels.length; i < buffers.visible.length; i++) buffers.visible[i] = 0
 }
 
 /** Whether the caller handed over a loaded font rather than a file to load. */

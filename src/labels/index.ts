@@ -12,6 +12,7 @@ export {
   type LabelLayoutBuffers,
   type LabelPlacement,
 } from './layout'
+export { fillBuffers, type LabelCluster } from './fill'
 export { collectCandidates, trackedPointIndices, type LabelSource } from './candidates'
 export { resolveCollisions } from './collision'
 export { packLabels, DEFAULT_MAX_HEIGHT, type PackedAtlas, type PackedSprite } from './packing'

@@ -9,6 +9,10 @@
     // also what the package's `types` paths already assume: `src/index.ts`
     // becomes `lib/typescript/index.d.ts`, not `lib/typescript/src/…`.
     "rootDir": "./src",
+    // No ambient node types in the shipped declarations. `@types/node` is a
+    // devDependency for the test that reads Skia's C++ headers; nothing that
+    // ships may depend on it.
+    "types": [],
     "outDir": "lib/typescript"
   },
   "exclude": ["node_modules", "lib", "example", "reference", "**/__tests__"]

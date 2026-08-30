@@ -54,10 +54,10 @@
     "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run shaders:validate && npm run build"
   },
   "peerDependencies": {
+    "@shopify/react-native-skia": ">=2.6.0",
     "expo-gl": ">=57.0.0",
     "react": ">=19.0.0",
     "react-native": ">=0.86.0",
-    "@shopify/react-native-skia": ">=2.6.0",
     "react-native-reanimated": ">=4.5.0"
   },
   "peerDependenciesMeta": {
@@ -73,6 +73,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@shopify/react-native-skia": "2.6.2",
+    "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "d3-force": "^3.0.0",
     "eslint": "^10.9.1",
@@ -80,12 +82,11 @@
     "react": "^19.2.8",
     "react-native": "0.86.3",
     "react-native-builder-bob": "^0.43.0",
+    "react-native-reanimated": "4.5.1",
+    "tsx": "^4.23.13",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.68.0",
-    "vitest": "^4.1.11",
-    "tsx": "^4.23.13",
-    "@shopify/react-native-skia": "2.6.2",
-    "react-native-reanimated": "4.5.1"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=20"
