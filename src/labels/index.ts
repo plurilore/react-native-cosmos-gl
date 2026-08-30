@@ -11,6 +11,7 @@ export {
 } from './layout'
 export { collectCandidates, trackedPointIndices, type LabelSource } from './candidates'
 export { resolveCollisions } from './collision'
+export { packLabels, type PackedAtlas, type PackedSprite } from './packing'
 export {
   prioritise,
   clusterPriority,

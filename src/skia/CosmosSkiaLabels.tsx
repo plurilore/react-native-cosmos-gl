@@ -18,6 +18,7 @@ import {
   LabelManager,
   createLabelLayoutBuffers,
   layoutLabels,
+  packLabels,
   type LabelLayoutBuffers,
   type LabelPolicy,
   type MeasuredLabel,
@@ -272,13 +273,14 @@ export function CosmosSkiaLabels ({
   })
 
   const texture = usePictureAsTexture(atlas?.picture ?? null, atlas?.size ?? UNIT_SIZE)
-  const sprites = atlas?.sprites ?? EMPTY_SPRITES
 
   if (!font || !atlas) return null
 
   return (
     <Canvas style={styles.canvas} pointerEvents="none">
-      <Atlas image={texture} sprites={sprites} transforms={transforms} />
+      {/* `atlas.sprites` is padded to the same length as `transforms`; the
+          native atlas throws if they differ. */}
+      <Atlas image={texture} sprites={atlas.sprites} transforms={transforms} />
     </Canvas>
   )
 }
@@ -297,23 +299,15 @@ export function bakeAtlas (
   chipColor: string | undefined,
   padding: readonly [number, number, number, number]
 ): BakedAtlas {
-  const sprites: SkRect[] = []
-  let cursorX = 0
-  let cursorY = 0
-  let rowHeight = 0
+  // Padded to the pool size, not to the label count. The native atlas requires
+  // the sprite and transform arrays to be the same length and throws if they
+  // are not — on every commit, which React then repeats.
+  const packed = packLabels(labels, MAX_LABELS, ATLAS_WIDTH)
+  const sprites: SkRect[] = packed.sprites.map((sprite) =>
+    Skia.XYWHRect(sprite.x, sprite.y, sprite.width, sprite.height)
+  )
 
-  for (const label of labels) {
-    if (cursorX + label.width > ATLAS_WIDTH && cursorX > 0) {
-      cursorX = 0
-      cursorY += rowHeight
-      rowHeight = 0
-    }
-    sprites.push(Skia.XYWHRect(cursorX, cursorY, label.width, label.height))
-    cursorX += label.width
-    rowHeight = Math.max(rowHeight, label.height)
-  }
-
-  const size = { width: ATLAS_WIDTH, height: Math.max(1, cursorY + rowHeight) }
+  const size = { width: packed.width, height: packed.height }
   const textPaint = Skia.Paint()
   textPaint.setColor(Skia.Color(color))
   const chipPaint = Skia.Paint()
@@ -375,7 +369,6 @@ function isSkFont (value: unknown): value is SkFont {
   return typeof value === 'object' && value !== null && 'measureText' in value
 }
 
-const EMPTY_SPRITES: SkRect[] = []
 const UNIT_SIZE = { width: 1, height: 1 }
 const EMPTY_VIEW: ViewProjection = {
   k: 1, x: 0, y: 0, offsetX: 0, offsetY: 0, spaceSize: 0, screenWidth: 0, screenHeight: 0,
