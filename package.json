@@ -33,6 +33,7 @@
   "files": [
     "src",
     "lib",
+    "skia",
     "README.md",
     "LICENSE",
     "!**/__tests__",
