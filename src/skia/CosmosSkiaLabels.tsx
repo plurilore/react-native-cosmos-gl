@@ -382,5 +382,12 @@ const EMPTY_VIEW: ViewProjection = {
 }
 
 const styles = StyleSheet.create({
-  canvas: { ...StyleSheet.absoluteFillObject, pointerEvents: 'none' },
+  canvas: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    pointerEvents: 'none',
+  },
 })

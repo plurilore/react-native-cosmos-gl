@@ -78,7 +78,7 @@
     "eslint": "^9.17.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "react": "^19.0.0",
-    "react-native": "^0.79.0",
+    "react-native": "^0.86.0",
     "react-native-builder-bob": "^0.40.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.20.0",
