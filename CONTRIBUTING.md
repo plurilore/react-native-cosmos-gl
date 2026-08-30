@@ -84,10 +84,13 @@ module and wiring, not new GLSL. One wiring detail: `fill-sampled-links.vert`
 calls `conicParametricCurve`, so whatever compiles it has to splice the helper
 in the way `Lines` does — `withShaderModules(source, conicParametricCurveGLSL)`.
 
-The larger gap is that **nothing here has run on physical hardware.** The tests
-verify logic and wiring against a mock context; they have never compiled a
-shader on a real driver. Reports from actual devices are the most useful
-contribution right now.
+The larger gap is **iOS.** The engine now runs on physical Android hardware —
+which is how the `scaleLinksOnZoom` shader bug and the label frame costs were
+found — but nothing has been exercised on a Metal-backed driver, and the Skia
+label path there is untried. The tests verify logic and wiring against a mock
+context and the shader gate compiles against the Khronos reference compiler;
+neither is a real driver. Reports from actual devices, iOS especially, are the
+most useful contribution right now.
 
 ## Benchmarking
 

@@ -5,6 +5,10 @@
     "declaration": true,
     "declarationMap": true,
     "emitDeclarationOnly": true,
+    // TypeScript 6 requires this to be explicit for declaration emit. It is
+    // also what the package's `types` paths already assume: `src/index.ts`
+    // becomes `lib/typescript/index.d.ts`, not `lib/typescript/src/…`.
+    "rootDir": "./src",
     "outDir": "lib/typescript"
   },
   "exclude": ["node_modules", "lib", "example", "reference", "**/__tests__"]

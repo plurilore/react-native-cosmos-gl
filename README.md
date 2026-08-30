@@ -12,12 +12,20 @@ hundreds of thousands of points stay interactive on a phone.
 ```bash
 npm install react-native-cosmos-gl
 npx expo install expo-gl
+# Optional, for the Skia label renderer:
+npx expo install @shopify/react-native-skia react-native-reanimated
 ```
 
-> **Pre-release.** The engine is covered by 127 tests against a mock WebGL2
-> context that parses each shader's real declarations — but it has not yet run
-> on physical hardware. Shader compilation on actual iOS and Android drivers is
-> unverified. Treat `0.x` accordingly.
+Requires React 19, React Native 0.86, Expo SDK 57 and Node 20 or newer. This is
+a new package with no installed base to carry, so the floors are what the code
+needs rather than the oldest thing that might work.
+
+> **Pre-release.** The engine is covered by 215 tests against a mock WebGL2
+> context that parses each shader's real declarations, plus a shader gate that
+> compiles all 38 through the Khronos reference compiler. It now runs on
+> physical Android hardware; **iOS has not been exercised**, so Metal-backed
+> shader compilation and the Skia label path there are unverified. Treat `0.x`
+> accordingly.
 >
 > **Check your device first.** `probeDevice(gl)` reports whether a device can
 > run the engine and why not, before you write anything against it:

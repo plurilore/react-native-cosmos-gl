@@ -16,8 +16,9 @@
     "noEmit": true,
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
-    "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] }
+    // No `baseUrl`: deprecated in TypeScript 6 and removed in 7. `paths` has
+    // resolved relative to this file since 4.4, which is what was wanted.
+    "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src"],
   "exclude": ["node_modules", "lib", "example", "reference"]
