@@ -24,9 +24,10 @@ import {
 } from './variables'
 import type { GraphConfig, GraphConfigInterface, CosmosPointerEvent, FitViewBounds } from './config'
 import { getRgbaColor } from './color'
+import type { ViewProjection } from './view-projection'
 import { textureSizeFor, clamp, boundScale } from './helper'
 
-export type { GraphConfig, GraphConfigInterface, FitViewBounds }
+export type { GraphConfig, GraphConfigInterface, FitViewBounds, ViewProjection }
 
 /**
  * A GPU-accelerated force graph.
@@ -78,7 +79,7 @@ export class Graph {
   private isRepulsionFromPointerActive = false
   private fitViewTimeout: ReturnType<typeof setTimeout> | undefined
   private hasFitViewOnInitRun = false
-  private readonly viewTransformListeners = new Set<(transform: { k: number; x: number; y: number }) => void>()
+  private readonly viewTransformListeners = new Set<(transform: ViewProjection) => void>()
   private readonly invalidateListeners = new Set<() => void>()
   /** Set whenever something that changes the picture happens. */
   private isFrameNeeded = true
@@ -896,16 +897,36 @@ export class Graph {
   }
 
   /**
-   * The current view transform: scale and translation, screen pixels.
+   * Everything needed to turn a simulation-space position into screen pixels.
    *
-   * Exposed so a label layer can project its own anchors at display refresh
-   * without asking the graph to convert one position at a time — and without
-   * reading anything back from the GPU, since panning and zooming move the
-   * camera, not the points.
+   * A complete description rather than just the transform, because the
+   * consumer that needs it most — a label layer projecting anchors at display
+   * refresh — runs where it cannot call back into the engine at all. Given
+   * these numbers the projection is:
+   *
+   * ```
+   * screenX = (worldX + offsetX) * k + x
+   * screenY = (spaceSize - worldY + offsetY) * k + y
+   * ```
+   *
+   * The Y term is inverted because simulation space has Y up and the screen
+   * has Y down. `projectViewPoint` applies exactly this, and a test pins it
+   * against `spaceToScreenPosition` so the two cannot drift.
    */
-  public getViewProjection (): { k: number; x: number; y: number } {
+  public getViewProjection (): ViewProjection {
     const { k, x, y } = this.zoomInstance.eventTransform
-    return { k, x, y }
+    const [offsetX, offsetY] = this.store.spaceOffsets
+    const [screenWidth, screenHeight] = this.store.screenSize
+    return {
+      k,
+      x,
+      y,
+      offsetX,
+      offsetY,
+      spaceSize: this.store.adjustedSpaceSize,
+      screenWidth,
+      screenHeight,
+    }
   }
 
   /**
@@ -915,7 +936,7 @@ export class Graph {
    * this at the display's refresh rate, and anything that turned it into React
    * state would re-render the graph on every frame of a pan.
    */
-  public onViewTransform (listener: (transform: { k: number; x: number; y: number }) => void): () => void {
+  public onViewTransform (listener: (transform: ViewProjection) => void): () => void {
     this.viewTransformListeners.add(listener)
     return () => {
       this.viewTransformListeners.delete(listener)

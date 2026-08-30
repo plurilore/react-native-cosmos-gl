@@ -29,6 +29,8 @@ export type ResolvedLabel = PrioritisedLabel & {
  */
 export class LabelManager {
   private previouslyVisible = new Set<string>()
+  /** Measured size per label string. Text metrics do not depend on the camera. */
+  private readonly measurements = new Map<string, { width: number; height: number }>()
 
   /** Point indices whose positions the caller should keep tracked. */
   public tracked (
@@ -93,11 +95,59 @@ export class LabelManager {
       .sort((a, b) => a.priority - b.priority)
   }
 
-  /** Forgets the hysteresis state. Call when the graph is replaced. */
+  /**
+   * The labels to draw, with their sizes, but not yet placed.
+   *
+   * The slow half of the work: choosing candidates, ranking them, and
+   * measuring their text. None of it depends on the camera — a label's width
+   * cannot change because the view panned — so it belongs on the clock that
+   * tracks the *data*, leaving only projection and collision for the frame.
+   *
+   * Measurements are cached per string. Measuring text is a synchronous call
+   * into the text engine, and doing it per label per frame was most of what
+   * made the previous design expensive.
+   */
+  public select (options: {
+    source: LabelSource
+    policy: LabelPolicy
+    hasSelection: boolean
+    measure: MeasureLabel
+    weightSummary?: { min: number; max: number }
+  }): MeasuredLabel[] {
+    const candidates = collectCandidates(options.source, options.policy, options.hasSelection)
+    const clusterCounts = candidates
+      .filter((candidate) => candidate.kind === 'cluster')
+      .map((candidate) => candidate.count ?? 0)
+
+    const prioritised = prioritise(candidates, {
+      weightSummary: options.weightSummary ?? summariseWeights(candidates),
+      clusterCountExtent: countExtent(clusterCounts),
+    })
+
+    const measured = prioritised.map((label) => {
+      const cached = this.measurements.get(label.text)
+      const size = cached ?? options.measure(label)
+      if (!cached) this.measurements.set(label.text, size)
+      return { ...label, width: size.width, height: size.height }
+    })
+
+    // Bounded so a long session cannot grow it without limit; label text
+    // repeats heavily, so even a small cache hits almost always.
+    if (this.measurements.size > MEASUREMENT_CACHE_LIMIT) this.measurements.clear()
+    return measured
+  }
+
+  /** Forgets the hysteresis state and cached measurements. */
   public reset (): void {
     this.previouslyVisible = new Set()
+    this.measurements.clear()
   }
 }
+
+/** A selected label with its measured screen size, before placement. */
+export type MeasuredLabel = PrioritisedLabel & { width: number; height: number }
+
+const MEASUREMENT_CACHE_LIMIT = 2_000
 
 /**
  * The weight column's range across the candidates in hand.

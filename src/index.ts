@@ -45,7 +45,12 @@ export {
   type LabelClass,
   type LabelPolicy,
   type PrioritisedLabel,
+  type MeasuredLabel,
+  createLabelLayoutBuffers,
+  layoutLabels,
+  type LabelLayoutBuffers,
 } from './labels'
+export { projectViewPoint, type ViewProjection } from './core/view-projection'
 export { CosmosClusterLabels, type CosmosClusterLabelsProps } from './react/CosmosClusterLabels'
 export { CosmosLegend, type CosmosLegendProps } from './react/CosmosLegend'
 export { CosmosSearch, type CosmosSearchProps } from './react/CosmosSearch'

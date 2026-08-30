@@ -150,6 +150,16 @@ export class Store {
     this.scaleYOffset = (height - adjustedSpaceSize) / 2
   }
 
+  /**
+   * The space→screen offsets, for a consumer projecting positions itself.
+   *
+   * Exposed because a label layer running on another thread cannot call back
+   * into the engine per point: it needs the numbers, not the function.
+   */
+  public get spaceOffsets (): readonly [number, number] {
+    return [this.scaleXOffset, this.scaleYOffset]
+  }
+
   public scaleX (x: number): number {
     return x + this.scaleXOffset
   }

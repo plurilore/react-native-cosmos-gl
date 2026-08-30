@@ -1,4 +1,14 @@
-export { LabelManager, type MeasureLabel, type ResolvedLabel } from './manager'
+export {
+  LabelManager,
+  type MeasureLabel,
+  type ResolvedLabel,
+  type MeasuredLabel,
+} from './manager'
+export {
+  createLabelLayoutBuffers,
+  layoutLabels,
+  type LabelLayoutBuffers,
+} from './layout'
 export { collectCandidates, trackedPointIndices, type LabelSource } from './candidates'
 export { resolveCollisions } from './collision'
 export {
