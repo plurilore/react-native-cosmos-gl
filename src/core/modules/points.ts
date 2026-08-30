@@ -30,6 +30,8 @@ import {
   pointsInterpolatePositionFrag,
   pointsDragPointFrag,
   pointsFillPickingBufferVert,
+  pointsFillSampledPointsVert,
+  pointsFillSampledPointsFrag,
   pointsFillPickingBufferFrag,
   pointsTrackPositionsFrag,
   pointsFindPointsInRectFrag,
@@ -153,7 +155,12 @@ export class Points extends CoreModule {
   private interpolatePositionCommand: Model | undefined
   private dragPointCommand: Model | undefined
   private fillPickingBufferCommand: Model | undefined
+  private fillSampledPointsCommand: Model | undefined
   private trackPointsCommand: Model | undefined
+  private sampledPointsTexture: Texture | undefined
+  private sampledPointsFbo: Framebuffer | undefined
+  /** Cell size, in screen pixels, the sampling grid was last built for. */
+  private sampledPointsDistance = -1
   private findPointsInRectCommand: Model | undefined
 
   private drawPointIndices: GLBuffer | undefined
@@ -271,6 +278,16 @@ export class Points extends CoreModule {
       vs: pointsFillPickingBufferVert,
       fs: pointsFillPickingBufferFrag,
       topology: 'point-list',
+      parameters: { blend: false, depthTest: false, depthWriteEnabled: false },
+    })
+
+    this.fillSampledPointsCommand = new Model(device, {
+      id: 'fill-sampled-points',
+      vs: pointsFillSampledPointsVert,
+      fs: pointsFillSampledPointsFrag,
+      topology: 'point-list',
+      // No blending and no depth: each cell keeps whichever point drew last,
+      // which is the whole sampling rule.
       parameters: { blend: false, depthTest: false, depthWriteEnabled: false },
     })
   }
@@ -820,6 +837,87 @@ export class Points extends CoreModule {
   }
 
   /**
+   * One representative point per cell of a screen-space grid.
+   *
+   * This is how a label layer decides what to name without reading every point
+   * back: the viewport is tiled into `distance`-pixel cells, every visible
+   * point draws a single pixel into its cell, and whichever draws last wins it.
+   * The result is a set that is spread across the screen rather than clustered
+   * where the graph happens to be dense — which is what makes labels fill the
+   * view instead of piling into one corner.
+   *
+   * Off-screen points clip away entirely, so the candidate set is bounded by
+   * the *screen*, not by the size of the graph. Returns simulation-space
+   * positions, so the caller can project them itself without a second readback.
+   */
+  public sampleVisiblePoints (distance = 125): Map<number, [number, number]> {
+    const command = this.fillSampledPointsCommand
+    const { store, data } = this
+    const result = new Map<number, [number, number]>()
+    if (!command || !this.currentPositionTexture || !this.drawPointIndices) return result
+
+    const pointsNumber = data.pointsNumber ?? 0
+    if (pointsNumber === 0) return result
+
+    const [screenWidth, screenHeight] = store.screenSize
+    if (!screenWidth || !screenHeight) return result
+
+    const cell = distance > 0 ? distance : 100
+    const width = Math.max(1, Math.ceil(screenWidth / cell))
+    const height = Math.max(1, Math.ceil(screenHeight / cell))
+
+    if (
+      !this.sampledPointsTexture ||
+      this.sampledPointsTexture.width !== width ||
+      this.sampledPointsTexture.height !== height ||
+      this.sampledPointsDistance !== cell
+    ) {
+      this.sampledPointsFbo?.destroy()
+      this.sampledPointsTexture?.destroy()
+      this.sampledPointsTexture = new Texture(this.device, {
+        width, height, format: 'rgba32float', id: 'sampled-points',
+      })
+      this.sampledPointsFbo = new Framebuffer(this.device, {
+        colorAttachments: [this.sampledPointsTexture], id: 'sampled-points',
+      })
+      this.sampledPointsDistance = cell
+    }
+
+    const fbo = this.sampledPointsFbo
+    if (!fbo) return result
+    // Alpha 0 marks an empty cell. Index 0 is a real point, so the emptiness
+    // test cannot be on the index channel.
+    fbo.clear(0, 0, 0, 0)
+
+    command.setAttributes({ pointIndices: { buffer: this.drawPointIndices, size: 2 } })
+    command.vertexCount = pointsNumber
+    command.setUniforms({
+      pointsTextureSize: store.pointsTextureSize,
+      transformationMatrix: store.transform,
+      spaceSize: store.adjustedSpaceSize,
+      screenSize: store.screenSize,
+    })
+    command.setTextures({
+      positionsTexture: this.currentPositionTexture,
+      exitTexture: this.exitTexture,
+    })
+    command.draw(fbo)
+
+    const pixels = new Float32Array(width * height * 4)
+    fbo.readPixels(pixels)
+    for (let i = 0; i < width * height; i++) {
+      if (pixels[i * 4 + 1] !== 1) continue
+      const index = Math.round(pixels[i * 4] as number)
+      if (index < 0 || index >= pointsNumber) continue
+      const x = pixels[i * 4 + 2] as number
+      const y = pixels[i * 4 + 3] as number
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+      result.set(index, [x, y])
+    }
+    return result
+  }
+
+  /**
    * Registers the points whose positions should be cheap to read back.
    *
    * Reading every position back to place a handful of labels would stall the
@@ -1089,11 +1187,11 @@ export class Points extends CoreModule {
       this.pointStatusTexture, this.exitTexture, this.sizeTexture, this.pinnedStatusTexture,
       this.pointColorsTexture, this.sourcePositionTexture, this.targetPositionTexture,
       this.pickingTexture, this.searchTexture, this.trackedPositionsTexture, this.trackedIndicesTexture,
-      this.polygonPathTexture,
+      this.polygonPathTexture, this.sampledPointsTexture,
     ]
     const framebuffers = [
       this.currentPositionFbo, this.previousPositionFbo, this.velocityFbo,
-      this.pickingFbo, this.searchFbo, this.trackedPositionsFbo,
+      this.pickingFbo, this.searchFbo, this.trackedPositionsFbo, this.sampledPointsFbo,
     ]
     const buffers = [
       this.drawPointIndices, this.reversedPointIndexBuffer,
@@ -1104,7 +1202,7 @@ export class Points extends CoreModule {
     const models = [
       this.drawCommand, this.drawCoreCommand, this.updatePositionCommand,
       this.interpolatePositionCommand, this.dragPointCommand,
-      this.fillPickingBufferCommand, this.trackPointsCommand,
+      this.fillPickingBufferCommand, this.fillSampledPointsCommand, this.trackPointsCommand,
       this.findPointsInRectCommand, this.findPointsInPolygonCommand,
       this.drawHighlightedCommand,
     ]

@@ -40,6 +40,14 @@ export class Zoom {
 
   private animation: ZoomAnimation | undefined
 
+  /**
+   * Called whenever the view transform changes, from any source.
+   *
+   * A hook rather than a subscriber list because there is exactly one owner —
+   * the graph — and it fans out from there.
+   */
+  public onTransform: (() => void) | undefined
+
   public constructor (store: Store, config: GraphConfigInterface) {
     this.store = store
     this.config = config
@@ -205,6 +213,7 @@ export class Zoom {
     mat3.translate(transform, transform, w / 2, h / 2)
     mat3.scale(transform, transform, w / 2, h / 2)
     mat3.scale(transform, transform, 1, -1)
+    this.onTransform?.()
   }
 
   /** Recomputes the matrix after a screen resize, keeping the transform. */

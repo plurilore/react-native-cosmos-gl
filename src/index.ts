@@ -25,6 +25,27 @@ export {
   type SelectionOptions,
 } from './react/CosmosGraph'
 export { CosmosLabels, type CosmosLabelsProps } from './react/CosmosLabels'
+export {
+  LabelManager,
+  collectCandidates,
+  trackedPointIndices,
+  resolveCollisions,
+  prioritise,
+  clusterPriority,
+  normaliseColumnWeight,
+  countExtent,
+  LABEL_PRIORITY_BAND,
+  CLUSTER_PRIORITY_RANGE,
+  COLUMN_WEIGHT_SPAN,
+  type LabelSource,
+  type MeasureLabel,
+  type ResolvedLabel,
+  type LabelBox,
+  type LabelCandidate,
+  type LabelClass,
+  type LabelPolicy,
+  type PrioritisedLabel,
+} from './labels'
 export { CosmosClusterLabels, type CosmosClusterLabelsProps } from './react/CosmosClusterLabels'
 export { CosmosLegend, type CosmosLegendProps } from './react/CosmosLegend'
 export { CosmosSearch, type CosmosSearchProps } from './react/CosmosSearch'
@@ -48,10 +69,13 @@ export { searchPoints, type SearchResult } from './data/search'
 export {
   encodeColors,
   encodeSizes,
+  encodeLinkWidths,
   type ColorStrategy,
   type SizeStrategy,
+  type LinkWidthStrategy,
   type ColorEncoding,
   type SizeEncoding,
+  type LinkWidthEncoding,
   type ResolvedColorEncoding,
   type ResolvedSizeEncoding,
 } from './data/encode'

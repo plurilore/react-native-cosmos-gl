@@ -78,6 +78,10 @@ export class Graph {
   private isRepulsionFromPointerActive = false
   private fitViewTimeout: ReturnType<typeof setTimeout> | undefined
   private hasFitViewOnInitRun = false
+  private readonly viewTransformListeners = new Set<(transform: { k: number; x: number; y: number }) => void>()
+  private readonly invalidateListeners = new Set<() => void>()
+  /** Set whenever something that changes the picture happens. */
+  private isFrameNeeded = true
 
   public constructor (gl: GL, config?: GraphConfig) {
     this.device = new Device(gl)
@@ -87,6 +91,9 @@ export class Graph {
     this.data = new GraphData(this.config)
     this.transition = new Transition(this.config)
     this.zoomInstance = new Zoom(this.store, this.config)
+    // Fanned out from here rather than subscribed to directly, so the zoom
+    // instance stays unaware of who is listening.
+    this.zoomInstance.onTransform = () => this.emitViewTransform()
 
     if (this.config.randomSeed !== undefined) this.store.addRandomSeed(this.config.randomSeed)
     this.store.setMaxTextureSize(this.device.features.maxTextureSize)
@@ -325,6 +332,10 @@ export class Graph {
 
     if (this.config.renderLinks) lines.draw(viewport, null)
     points.draw(viewport, null)
+
+    // Cleared last: anything set during this frame's data or simulation work
+    // has already been consumed by it.
+    this.isFrameNeeded = false
   }
 
   /** Starts (or restarts) the simulation with a full alpha. */
@@ -582,6 +593,8 @@ export class Graph {
       config.onPointMouseOver || config.onPointMouseOut || config.renderHoveredPointRing
     )
     if (!wantsPointHover && !store.isLinkHoveringEnabled) return
+    // A hover ring is a visible change nothing else marks.
+    this.invalidate()
 
     const hovered = wantsPointHover || store.isLinkHoveringEnabled
       ? this.findPointOnScreen(event.x, event.y)
@@ -868,6 +881,103 @@ export class Graph {
   /** Tracked point positions in simulation space, by point index. */
   public getTrackedPointPositionsMap (): Map<number, [number, number]> {
     return this.points?.getTrackedPositionsMap() ?? new Map()
+  }
+
+  /**
+   * One visible point per `distance`-pixel cell of the viewport, with its
+   * simulation-space position.
+   *
+   * The candidate set a label layer draws from: spread across the screen
+   * rather than bunched where the graph is dense, and bounded by the viewport
+   * rather than by the size of the graph.
+   */
+  public sampleVisiblePointIndices (distance = this.config.pointSamplingDistance): Map<number, [number, number]> {
+    return this.points?.sampleVisiblePoints(distance) ?? new Map()
+  }
+
+  /**
+   * The current view transform: scale and translation, screen pixels.
+   *
+   * Exposed so a label layer can project its own anchors at display refresh
+   * without asking the graph to convert one position at a time — and without
+   * reading anything back from the GPU, since panning and zooming move the
+   * camera, not the points.
+   */
+  public getViewProjection (): { k: number; x: number; y: number } {
+    const { k, x, y } = this.zoomInstance.eventTransform
+    return { k, x, y }
+  }
+
+  /**
+   * Calls back whenever the view transform changes. Returns an unsubscribe.
+   *
+   * Deliberately a callback rather than a value to poll: a label layer needs
+   * this at the display's refresh rate, and anything that turned it into React
+   * state would re-render the graph on every frame of a pan.
+   */
+  public onViewTransform (listener: (transform: { k: number; x: number; y: number }) => void): () => void {
+    this.viewTransformListeners.add(listener)
+    return () => {
+      this.viewTransformListeners.delete(listener)
+    }
+  }
+
+  /** Notifies view-transform listeners. Called by the zoom instance. */
+  public emitViewTransform (): void {
+    this.invalidate()
+    if (this.viewTransformListeners.size === 0) return
+    const transform = this.getViewProjection()
+    for (const listener of this.viewTransformListeners) listener(transform)
+  }
+
+  // ------------------------------------------------------- frame scheduling ---
+
+  /**
+   * Whether anything has changed since the last frame was drawn.
+   *
+   * A graph that is settled, unzoomed and untouched produces an identical
+   * frame every time it is asked to. Drawing it anyway costs battery and heat
+   * for no picture, and on a phone that is a defect rather than an
+   * inefficiency — so the host can ask before it schedules.
+   */
+  public get needsFrame (): boolean {
+    return (
+      this.isFrameNeeded ||
+      this.isDataUpdateNeeded ||
+      this.store.isSimulationRunning ||
+      this.zoomInstance.isRunning ||
+      this.zoomInstance.isAnimating ||
+      this.transition.isPending ||
+      this.transition.isActive ||
+      this.store.draggingPointIndex !== undefined ||
+      this.isRepulsionFromPointerActive
+    )
+  }
+
+  /**
+   * Marks the picture as out of date, so the next scheduling check draws.
+   *
+   * Called by the engine for everything it knows about; hosts call it for what
+   * it does not — a changed overlay, a resized container, anything drawn on
+   * top that shares the surface.
+   */
+  public invalidate (): void {
+    this.isFrameNeeded = true
+    for (const listener of this.invalidateListeners) listener()
+  }
+
+  /**
+   * Called when the graph becomes dirty while it was idle. Returns an
+   * unsubscribe.
+   *
+   * A host that stops its own frame loop when `needsFrame` goes false needs
+   * waking again; polling for that would be the loop it just stopped.
+   */
+  public onInvalidate (listener: () => void): () => void {
+    this.invalidateListeners.add(listener)
+    return () => {
+      this.invalidateListeners.delete(listener)
+    }
   }
 
   private applyTransitionProgress (): void {

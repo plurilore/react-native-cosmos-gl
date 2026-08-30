@@ -55,10 +55,14 @@
   "peerDependencies": {
     "expo-gl": ">=13.0.0 || >=55.0.0",
     "react": ">=18.0.0",
-    "react-native": ">=0.72.0"
+    "react-native": ">=0.72.0",
+    "@shopify/react-native-skia": ">=1.0.0"
   },
   "peerDependenciesMeta": {
     "expo-gl": {
+      "optional": true
+    },
+    "@shopify/react-native-skia": {
       "optional": true
     }
   },
@@ -74,7 +78,8 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.20.0",
     "vitest": "^2.1.9",
-    "tsx": "^4.19.0"
+    "tsx": "^4.19.0",
+    "@shopify/react-native-skia": "2.6.2"
   },
   "engines": {
     "node": ">=18"
@@ -104,5 +109,18 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/typescript/index.d.ts",
+      "react-native": "./src/index.ts",
+      "default": "./lib/commonjs/index.js"
+    },
+    "./skia": {
+      "types": "./lib/typescript/skia/index.d.ts",
+      "react-native": "./src/skia/index.ts",
+      "default": "./lib/commonjs/skia/index.js"
+    },
+    "./package.json": "./package.json"
   }
 }

@@ -5,8 +5,10 @@ import { DataFrame, type Row } from './data-frame'
 import {
   encodeColors,
   encodeSizes,
+  encodeLinkWidths,
   type ColorStrategy,
   type SizeStrategy,
+  type LinkWidthStrategy,
   type ResolvedColorEncoding,
   type ResolvedSizeEncoding,
 } from './encode'
@@ -70,6 +72,11 @@ export type GraphDataMapping = {
   linkWidthBy?: string
   linkWidthRange?: [number, number]
   linkWidthByFn?: (value: unknown, index: number) => number
+  /**
+   * How links sharing an ordered source→target pair combine into one width.
+   * Defaults to `direct` (no aggregation); `sum` matches Cosmograph.
+   */
+  linkWidthStrategy?: LinkWidthStrategy
 
   linkStrengthBy?: string
   linkStrengthRange?: [number, number]
@@ -131,6 +138,8 @@ export type ResolvedGraphData = {
 
 const DEFAULT_SPACE_SIZE = 4096
 const DEFAULT_POINT_SIZE = 4
+/** Cosmograph's `linkStrengthRange`, and the range the simulation is tuned for. */
+const DEFAULT_LINK_STRENGTH_RANGE: [number, number] = [0.2, 1]
 
 /** Shapes assigned in order when `pointShapeBy` is used. `None` is excluded. */
 const SHAPE_SEQUENCE: PointShape[] = [
@@ -208,17 +217,22 @@ export function resolveGraphData (mapping: GraphDataMapping): ResolvedGraphData 
     : undefined
 
   const linkWidthResult = keptLinkFrame && (mapping.linkWidthBy || mapping.linkWidthByFn)
-    ? encodeSizes(keptLinkFrame, linksCount, {
+    ? encodeLinkWidths(keptLinkFrame, linksCount, {
       by: mapping.linkWidthBy,
       range: mapping.linkWidthRange,
       fn: mapping.linkWidthByFn,
-    }, 1, undefined, true)
+      aggregate: mapping.linkWidthStrategy,
+    }, links, 1)
     : undefined
 
+  // Symmetric-log over the column's full extent, which is what a strength
+  // column means: its own endpoints are the interesting ones, so there is
+  // nothing here for a percentile band to protect against.
   const linkStrength = keptLinkFrame && mapping.linkStrengthBy
     ? encodeSizes(keptLinkFrame, linksCount, {
+      strategy: 'symlog',
       by: mapping.linkStrengthBy,
-      range: mapping.linkStrengthRange ?? [0.2, 1],
+      range: mapping.linkStrengthRange ?? DEFAULT_LINK_STRENGTH_RANGE,
     }, 1).sizes
     : undefined
 

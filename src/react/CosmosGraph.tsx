@@ -25,7 +25,7 @@ import { Graph } from '../core/graph'
 import type { GraphConfig, FitViewBounds } from '../core/config'
 import type { PointImageData } from '../core/graph-data'
 import type { Rgba } from '../core/color'
-import type { ColorStrategy, SizeStrategy } from '../data/encode'
+import type { ColorStrategy, SizeStrategy, LinkWidthStrategy } from '../data/encode'
 import { GestureController } from './gestures'
 import { getGLView, type ExpoWebGLRenderingContext } from './gl-view'
 import { resolveGraphData, type GraphDataMapping, type ResolvedGraphData } from '../data/resolve'
@@ -156,6 +156,12 @@ export type CosmosGraphProps = GraphConfig & {
   /** `[min, max]` in pixels. Defaults to `[1, 9]`. */
   linkWidthRange?: [number, number]
   linkWidthByFn?: (value: unknown, index: number) => number
+  /**
+   * How links sharing an ordered source→target pair combine into one width.
+   * `sum` totals the column over the pair before encoding it, which is what
+   * makes a doubled connection look doubled. Defaults to `direct`.
+   */
+  linkWidthStrategy?: LinkWidthStrategy
 
   /** Column driving each link's spring strength. */
   linkStrengthBy?: string
@@ -282,6 +288,19 @@ export type CosmosGraphRef = {
   trackPointsByIndices: (indices?: number[]) => void
   /** Tracked positions in simulation space, by point index. */
   getTrackedPointPositions: () => Map<number, [number, number]>
+  /**
+   * One visible point per `distance`-pixel cell of the viewport, with its
+   * simulation-space position — the candidate set for a label layer.
+   */
+  sampleVisiblePointIndices: (distance?: number) => Map<number, [number, number]>
+  /** The current view transform: scale and translation, screen pixels. */
+  getViewProjection: () => { k: number; x: number; y: number }
+  /** Subscribes to view-transform changes. Returns an unsubscribe. */
+  onViewTransform: (listener: (transform: { k: number; x: number; y: number }) => void) => () => void
+  /** Whether anything has changed since the last frame was drawn. */
+  needsFrame: () => boolean
+  /** Marks the picture out of date, waking the frame loop. */
+  invalidate: () => void
   /** Simulation space to screen pixels, under the current view transform. */
   spaceToScreenPosition: (position: [number, number]) => [number, number]
   /** Screen pixels to simulation space, under the current view transform. */
@@ -335,7 +354,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     pointLabelBy, pointLabelWeightBy, pointShapeBy,
     pointClusterBy, pointClusterStrengthBy, clusterPositionsMap,
     linkColorBy, linkColorStrategy, linkColorPalette, linkColorByFn,
-    linkWidthBy, linkWidthRange, linkWidthByFn, linkStrengthBy, linkStrengthRange,
+    linkWidthBy, linkWidthRange, linkWidthByFn, linkWidthStrategy, linkStrengthBy, linkStrengthRange,
     selectPointOnClick, selectNeighborsOnClick, resetSelectionOnBackgroundClick,
     onSelectionChange, onDataResolved, simulationRestartAlpha = 1,
     style, msaaSamples = 0, onReady, onError, children,
@@ -346,6 +365,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
   const glRef = useRef<ExpoWebGLRenderingContext | undefined>(undefined)
   const gesturesRef = useRef<GestureController | undefined>(undefined)
   const frameRef = useRef<number | undefined>(undefined)
+  const unsubscribeInvalidateRef = useRef<(() => void) | undefined>(undefined)
   const sizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 })
   const [isReady, setIsReady] = useState(false)
 
@@ -372,7 +392,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
       pointLabelBy, pointLabelWeightBy, pointShapeBy,
       pointClusterBy, pointClusterStrengthBy, clusterPositionsMap,
       linkColorBy, linkColorStrategy, linkColorPalette, linkColorByFn,
-      linkWidthBy, linkWidthRange, linkWidthByFn, linkStrengthBy, linkStrengthRange,
+      linkWidthBy, linkWidthRange, linkWidthByFn, linkWidthStrategy, linkStrengthBy, linkStrengthRange,
       spaceSize: config.spaceSize,
       randomSeed: config.randomSeed,
       pointDefaultSize: config.pointDefaultSize,
@@ -384,7 +404,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     pointLabelBy, pointLabelWeightBy, pointShapeBy,
     pointClusterBy, pointClusterStrengthBy, clusterPositionsMap,
     linkColorBy, linkColorStrategy, linkColorPalette, linkColorByFn,
-    linkWidthBy, linkWidthRange, linkWidthByFn, linkStrengthBy, linkStrengthRange,
+    linkWidthBy, linkWidthRange, linkWidthByFn, linkWidthStrategy, linkStrengthBy, linkStrengthRange,
     config.spaceSize, config.randomSeed, config.pointDefaultSize,
   ])
 
@@ -451,6 +471,15 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     },
   }), [config, selectPointOnClick, resetSelectionOnBackgroundClick, applySelection])
 
+  /**
+   * Draws a frame, and schedules the next one only if there will be anything
+   * new in it.
+   *
+   * A settled graph with a stationary camera renders an identical frame every
+   * time. Doing that at display refresh forever costs battery and heat for no
+   * picture — and on a device sharing the GPU with an overlay, it costs that
+   * overlay time too. So the loop stops, and `onInvalidate` restarts it.
+   */
   const renderFrame = useCallback(() => {
     const graph = graphRef.current
     const gl = glRef.current
@@ -460,8 +489,19 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     // expo-gl batches commands and only presents on this call; without it the
     // frame is computed and never shown.
     gl.endFrameEXP()
-    frameRef.current = requestAnimationFrame(renderFrame)
+
+    if (graph.needsFrame) {
+      frameRef.current = requestAnimationFrame(renderFrame)
+    } else {
+      frameRef.current = undefined
+    }
   }, [])
+
+  /** Starts the loop if it is not already running. */
+  const scheduleFrame = useCallback(() => {
+    if (frameRef.current !== undefined) return
+    frameRef.current = requestAnimationFrame(renderFrame)
+  }, [renderFrame])
 
   const onContextCreate = useCallback((gl: ExpoWebGLRenderingContext) => {
     try {
@@ -473,9 +513,13 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
       const { width, height } = sizeRef.current
       if (width && height) graph.setSize(width, height)
 
+      // Wake the loop whenever the engine goes dirty while it is stopped.
+      unsubscribeInvalidateRef.current?.()
+      unsubscribeInvalidateRef.current = graph.onInvalidate(scheduleFrame)
+
       setIsReady(true)
       onReady?.(graph)
-      frameRef.current = requestAnimationFrame(renderFrame)
+      scheduleFrame()
     } catch (error) {
       onError?.(error instanceof Error ? error : new Error(String(error)))
     }
@@ -483,7 +527,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     // at call time, and re-creating the GL context because a parent passed a
     // new closure would destroy and rebuild the whole graph.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pixelRatio, renderFrame])
+  }, [pixelRatio, renderFrame, scheduleFrame])
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout
@@ -599,6 +643,8 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
   }, [isReady, resolved])
 
   useEffect(() => () => {
+    unsubscribeInvalidateRef.current?.()
+    unsubscribeInvalidateRef.current = undefined
     if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current)
     graphRef.current?.destroy()
     graphRef.current = undefined
@@ -623,6 +669,12 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     getZoomLevel: () => graphRef.current?.getZoomLevel() ?? 1,
     trackPointsByIndices: (indices) => graphRef.current?.trackPointsByIndices(indices),
     getTrackedPointPositions: () => graphRef.current?.getTrackedPointPositionsMap() ?? new Map(),
+    sampleVisiblePointIndices: (distance) =>
+      graphRef.current?.sampleVisiblePointIndices(distance) ?? new Map(),
+    getViewProjection: () => graphRef.current?.getViewProjection() ?? { k: 1, x: 0, y: 0 },
+    onViewTransform: (listener) => graphRef.current?.onViewTransform(listener) ?? (() => undefined),
+    needsFrame: () => graphRef.current?.needsFrame ?? false,
+    invalidate: () => graphRef.current?.invalidate(),
     spaceToScreenPosition: (position) => graphRef.current?.spaceToScreenPosition(position) ?? position,
     screenToSpacePosition: (position) => graphRef.current?.screenToSpacePosition(position) ?? position,
     getPointPositions: () => graphRef.current?.getPointPositions() ?? new Float32Array(),
