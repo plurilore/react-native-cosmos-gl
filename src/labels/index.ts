@@ -7,7 +7,10 @@ export {
 export {
   createLabelLayoutBuffers,
   layoutLabels,
+  toLabelPlacement,
+  EMPTY_LABEL_PLACEMENT,
   type LabelLayoutBuffers,
+  type LabelPlacement,
 } from './layout'
 export { collectCandidates, trackedPointIndices, type LabelSource } from './candidates'
 export { resolveCollisions } from './collision'

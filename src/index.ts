@@ -48,7 +48,13 @@ export {
   type MeasuredLabel,
   createLabelLayoutBuffers,
   layoutLabels,
+  toLabelPlacement,
+  EMPTY_LABEL_PLACEMENT,
+  packLabels,
   type LabelLayoutBuffers,
+  type LabelPlacement,
+  type PackedAtlas,
+  type PackedSprite,
 } from './labels'
 export { projectViewPoint, type ViewProjection } from './core/view-projection'
 export { CosmosClusterLabels, type CosmosClusterLabelsProps } from './react/CosmosClusterLabels'

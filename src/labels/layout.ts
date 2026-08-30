@@ -61,11 +61,14 @@ export function createLabelLayoutBuffers (capacity: number): LabelLayoutBuffers 
  * last time, and a forced label survives losing unless the winner is forced
  * too.
  *
- * Marked as a worklet so Reanimated will run it on the UI thread. Allocates
- * nothing, so it is safe to call at display refresh.
+ * Runs on the JS thread, on the same clock that selects the labels — *not* per
+ * camera frame. Two reasons. Worklets clone typed arrays rather than sharing
+ * them, so a buffer written here would never reach the render thread anyway.
+ * And it is not needed per frame: a pan is a translation, which moves every
+ * label equally and so cannot change which pair overlaps. Only zoom can, and
+ * the next pass is at most one interval away.
  */
 export function layoutLabels (buffers: LabelLayoutBuffers, view: ViewProjection): void {
-  'worklet'
   const { anchors, sizes, priorities, forced, screen, visible, previous, order } = buffers
   const count = buffers.count
 
@@ -135,4 +138,37 @@ export function layoutLabels (buffers: LabelLayoutBuffers, view: ViewProjection)
   }
 
   for (let i = 0; i < count; i++) previous[i] = (visible[i] ?? 0) as number
+}
+
+/**
+ * The render thread's view of the labels: plain, serialisable, read-only.
+ *
+ * Deliberately not the typed-array buffers. Those are cloned on the way across
+ * and frozen on the way in, so they can carry a snapshot but never an update.
+ */
+export type LabelPlacement = {
+  anchors: number[]
+  sizes: number[]
+  visible: number[]
+  count: number
+}
+
+/** Snapshots the laid-out buffers into something that can cross the boundary. */
+export function toLabelPlacement (buffers: LabelLayoutBuffers): LabelPlacement {
+  const count = buffers.count
+  const anchors: number[] = new Array(count * 2)
+  const sizes: number[] = new Array(count * 2)
+  const visible: number[] = new Array(count)
+  for (let i = 0; i < count; i++) {
+    anchors[i * 2] = buffers.anchors[i * 2] as number
+    anchors[i * 2 + 1] = buffers.anchors[i * 2 + 1] as number
+    sizes[i * 2] = buffers.sizes[i * 2] as number
+    sizes[i * 2 + 1] = buffers.sizes[i * 2 + 1] as number
+    visible[i] = (buffers.visible[i] ?? 0) as number
+  }
+  return { anchors, sizes, visible, count }
+}
+
+export const EMPTY_LABEL_PLACEMENT: LabelPlacement = {
+  anchors: [], sizes: [], visible: [], count: 0,
 }

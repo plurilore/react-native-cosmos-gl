@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createLabelLayoutBuffers, layoutLabels } from '../labels/layout'
+import { createLabelLayoutBuffers, layoutLabels, toLabelPlacement } from '../labels/layout'
 import { resolveCollisions } from '../labels'
 import type { LabelBox } from '../labels'
 import type { ViewProjection } from '../core/view-projection'
@@ -171,5 +171,50 @@ describe('layoutLabels', () => {
     buffers.sizes.fill(20)
     layoutLabels(buffers, identityView())
     for (let i = 2; i < 8; i++) expect(buffers.visible[i]).toBe(0)
+  })
+})
+
+describe('toLabelPlacement', () => {
+  it('crosses the thread boundary as plain arrays, not typed ones', () => {
+    // Worklets clone typed-array views rather than sharing them, so a buffer
+    // written on this side would never be seen on the other. Only a plain
+    // value assigned wholesale carries — which is why the snapshot exists.
+    const buffers = fill([{ x: 10, y: 20, width: 60, height: 18, priority: 1 }])
+    layoutLabels(buffers, identityView())
+    const placement = toLabelPlacement(buffers)
+
+    expect(Array.isArray(placement.anchors)).toBe(true)
+    expect(Array.isArray(placement.sizes)).toBe(true)
+    expect(Array.isArray(placement.visible)).toBe(true)
+    expect(ArrayBuffer.isView(placement.anchors)).toBe(false)
+  })
+
+  it('carries only the live slots', () => {
+    const buffers = createLabelLayoutBuffers(16)
+    buffers.count = 3
+    const placement = toLabelPlacement(buffers)
+    expect(placement.count).toBe(3)
+    expect(placement.anchors).toHaveLength(6)
+    expect(placement.sizes).toHaveLength(6)
+    expect(placement.visible).toHaveLength(3)
+  })
+
+  it('preserves the anchors, sizes and visibility it was given', () => {
+    const buffers = fill([
+      { x: 100, y: 100, width: 80, height: 16, priority: 1 },
+      { x: 110, y: 100, width: 80, height: 16, priority: 9 },
+    ])
+    layoutLabels(buffers, identityView())
+    const placement = toLabelPlacement(buffers)
+
+    expect(placement.anchors[0]).toBeCloseTo(100, 4)
+    expect(placement.sizes[0]).toBeCloseTo(80, 4)
+    // The overlap was resolved before the snapshot, so it carries the result.
+    expect(placement.visible).toEqual([0, 1])
+  })
+
+  it('is empty for an empty buffer', () => {
+    const placement = toLabelPlacement(createLabelLayoutBuffers(8))
+    expect(placement).toEqual({ anchors: [], sizes: [], visible: [], count: 0 })
   })
 })

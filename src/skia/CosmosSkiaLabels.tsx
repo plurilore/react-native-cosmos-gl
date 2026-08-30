@@ -19,11 +19,14 @@ import {
   createLabelLayoutBuffers,
   layoutLabels,
   packLabels,
+  toLabelPlacement,
+  EMPTY_LABEL_PLACEMENT,
+  type LabelPlacement,
   type LabelLayoutBuffers,
   type LabelPolicy,
   type MeasuredLabel,
 } from '../labels'
-import type { ViewProjection } from '../core/view-projection'
+import { projectViewPoint, type ViewProjection } from '../core/view-projection'
 
 export type CosmosSkiaLabelsProps = LabelPolicy & {
   /** A font file, as `require('./Inter.ttf')`, or a loaded `SkFont`. */
@@ -135,8 +138,15 @@ export function CosmosSkiaLabels ({
    * frame is the entire cost the camera imposes on the JS thread.
    */
   const view = useSharedValue<ViewProjection>(EMPTY_VIEW)
-  /** Bumped when the layout inputs change, so the transform buffer re-runs. */
-  const layoutVersion = useSharedValue(0)
+  /**
+   * What the render thread needs to place the labels, as plain arrays.
+   *
+   * Reassigned wholesale on every selection pass, never mutated. Worklets
+   * *clone* what crosses the boundary — typed arrays included — so a buffer
+   * mutated here would never be seen there, and mutating one already captured
+   * is rejected outright. Assignment is the only thing that carries.
+   */
+  const placement = useSharedValue<LabelPlacement>(EMPTY_LABEL_PLACEMENT)
 
   const measure = useCallback((label: { text: string }) => {
     if (!font) return { width: label.text.length * fontSize * 0.55, height: fontSize }
@@ -175,15 +185,19 @@ export function CosmosSkiaLabels ({
     }).slice(0, MAX_LABELS)
 
     fillBuffers(buffers, selected, anchors, sampled, clusters, margin)
+    // Collide here, against the camera as it stands. A pan cannot change which
+    // labels overlap — it moves them all equally — so this only goes stale
+    // under zoom, and never for longer than one interval.
+    layoutLabels(buffers, graph.getViewProjection())
     setAtlas(bakeAtlas(selected, font, fontSize, color, chipColor, padding))
-    layoutVersion.value += 1
+    placement.value = toLabelPlacement(buffers)
     onMeasure?.(Date.now() - startedAt, selected.length)
     // `policy` is spread from props and rebuilt every render; `policyKey` is
     // its content, which is what decides the outcome.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     graph, isReady, font, fontSize, color, chipColor, padding, margin, measure,
-    manager, buffers, resolved, selectedKey, policyKey, clusters, layoutVersion, onMeasure,
+    manager, buffers, resolved, selectedKey, policyKey, clusters, placement, onMeasure,
   ])
 
   // Ranking depends on the weight column, not on the camera or the selection.
@@ -249,27 +263,23 @@ export function CosmosSkiaLabels ({
   const transforms = useRSXformBuffer(MAX_LABELS, (xform, index) => {
     'worklet'
     const projection = view.value
-    // Read so the buffer also re-runs when the selection changes, not only
-    // when the camera moves.
-    const version = layoutVersion.value
-    if (version < 0) return
+    const placed = placement.value
 
-    if (index === 0) layoutLabels(buffers, projection)
-
-    if (index >= buffers.count || buffers.visible[index] !== 1) {
+    if (index >= placed.count || placed.visible[index] !== 1) {
       xform.set(1, 0, PARKED, PARKED)
       return
     }
-    const width = buffers.sizes[index * 2] as number
-    const height = buffers.sizes[index * 2 + 1] as number
+
+    const [screenX, screenY] = projectViewPoint(
+      projection,
+      placed.anchors[index * 2] as number,
+      placed.anchors[index * 2 + 1] as number
+    )
+    const width = placed.sizes[index * 2] as number
+    const height = placed.sizes[index * 2 + 1] as number
     // The sprite draws from its top-left and the anchor names the point, so
     // the label sits centred above it. `height` already carries the margin.
-    xform.set(
-      1,
-      0,
-      (buffers.screen[index * 2] as number) - width / 2,
-      (buffers.screen[index * 2 + 1] as number) - height
-    )
+    xform.set(1, 0, screenX - width / 2, screenY - height)
   })
 
   const texture = usePictureAsTexture(atlas?.picture ?? null, atlas?.size ?? UNIT_SIZE)
