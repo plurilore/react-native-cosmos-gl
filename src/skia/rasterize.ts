@@ -12,6 +12,12 @@ export type LabelRasterRequest = {
   slot: LabelAtlasSlot
 }
 
+/** Configures stable glyph advances before any label is measured. */
+export function configureFont (font: SkFont): SkFont {
+  font.setLinearMetrics(true)
+  return font
+}
+
 /**
  * Rasterizes all cache misses into one CPU-backed Skia surface.
  *

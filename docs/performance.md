@@ -11,12 +11,11 @@ Run both deterministic Atlas fixtures:
 - web parity: 900 points / 2,600 links;
 - mobile ceiling: 2,000 points / 6,000 links.
 
-For each fixture capture labels off, `renderMode="overlay"`, and
-`renderMode="inline"` while the simulation runs, while panning/zooming after it
-settles, and with 140 selected labels. Warm for five seconds, capture 30 seconds,
-repeat three times, and report the median run. Keep the display refresh mode
-fixed, disable remote JS debugging, and let the phone return to a stable thermal
-state between groups.
+For each fixture capture labels off and inline labels on while the simulation
+runs, while panning/zooming after it settles, and with 140 selected labels. Warm
+for five seconds, capture 30 seconds, repeat three times, and report the median
+run. Keep the display refresh mode fixed, disable remote JS debugging, and let
+the phone return to a stable thermal state between groups.
 
 The 90Hz release gate is:
 
@@ -37,7 +36,7 @@ percentiles, and the profiler's readback/upload counters.
 Use a development client and capture Android Perfetto FrameTimeline together
 with graphics, RenderThread and SurfaceFlinger/GPU tracks. The in-app profiler
 measures frames submitted by the graph and host call duration; it cannot prove
-where the driver or transparent-surface composition spent time.
+where the driver, GPU scheduler or compositor spent time.
 
 When `EXT_disjoint_timer_query_webgl2` is available, performance observers also
 receive asynchronous, non-disjoint `gpuMs` samples. They are intentionally

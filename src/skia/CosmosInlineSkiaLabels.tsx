@@ -18,8 +18,8 @@ import {
   type LabelPolicy,
   type MeasuredLabel,
 } from '../labels'
-import { configureFont } from './bake'
 import {
+  configureFont,
   mergeAdjacentLabelPatches,
   rasterizeLabelPatches,
   type LabelRasterRequest,
@@ -604,7 +604,7 @@ function inlineLabelCapacity (policy: LabelPolicy, clusterCount: number): number
     : 0
   // Cluster and point modes are mutually exclusive, while forced labels can
   // coexist with either. Allocate for the larger path and upload only the live
-  // count; unlike the legacy Atlas renderer, no parked sprite pool is drawn.
+  // count; no parked sprite pool is drawn.
   return Math.max(1, forced + Math.max(top + dynamic + selected, clusters))
 }
 

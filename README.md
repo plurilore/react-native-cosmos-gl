@@ -13,16 +13,15 @@ performance numbers must name the device and workload.
 ```bash
 npm install react-native-cosmos-gl
 npx expo install expo-gl
-# Optional label adapter. Reanimated is used only by its temporary overlay
-# fallback, but remains a peer while the runtime A/B switch is shipped.
-npx expo install @shopify/react-native-skia react-native-reanimated
+# Optional offscreen text rasterizer for inline labels:
+npx expo install @shopify/react-native-skia
 ```
 
 Requires React 19, React Native 0.86, Expo SDK 57 and Node 20 or newer. This is
 a new package with no installed base to carry, so the floors are what the code
 needs rather than the oldest thing that might work.
 
-> **Pre-release.** The engine is covered by 287 tests against a mock WebGL2
+> **Pre-release.** The engine is covered by 275 tests against a mock WebGL2
 > context that parses each shader's real declarations, plus a shader gate that
 > compiles all 40 through the Khronos reference compiler. It now runs on
 > physical Android hardware; **iOS has not been exercised**, so Metal-backed
@@ -334,7 +333,7 @@ import { CosmosSkiaLabels } from 'react-native-cosmos-gl/skia'
 </CosmosGraph>
 ```
 
-`CosmosSkiaLabels` defaults to `renderMode="inline"`. Skia rasterizes only cache
+`CosmosSkiaLabels` rasterizes only cache
 misses into alpha patches on a CPU-backed offscreen surface; the graph retains a
 2048² R8 atlas and draws every visible label in one instanced GL call after the
 points. Point anchors are sampled from the live position texture in the vertex
@@ -342,11 +341,10 @@ shader, so simulation and camera motion do not copy positions into JavaScript.
 Chip color, text color and corner radius are instance data and do not invalidate
 the text atlas.
 
-`renderMode="overlay"` retains the previous transparent Skia Canvas for one
-compatibility release and for A/B profiling. It needs Reanimated. It is
-event-driven and no longer runs an idle interval, but it still adds a second
-full-screen surface and therefore is not the default. `<CosmosLabels>` remains
-the accessible React Native text-view option for small sets.
+It mounts no Skia Canvas and has no Reanimated dependency. The package's root
+entry remains Skia-free; only consumers importing `react-native-cosmos-gl/skia`
+need the optional Skia peer. `<CosmosLabels>` remains the accessible React
+Native text-view option for small sets.
 
 Two rules the label layer follows that are worth knowing:
 
@@ -397,8 +395,8 @@ graph.onInvalidate(() => requestAnimationFrame(frame))
   a bounded gather only when called, and visible-point sampling is likewise
   explicit.
 - **The frame loop is on the JS thread**, so anything else on it is paid in
-  frames. Inline labels share the graph surface and need no per-frame React,
-  Skia or Reanimated work; keep the graph's parent from re-rendering per frame.
+  frames. Inline labels share the graph surface and need no per-frame React or
+  Skia work; keep the graph's parent from re-rendering per frame.
 - **Adding points should not re-anneal the layout.** A position update restarts
   the simulation at `simulationRestartAlpha`; leave it at `1` when the data is
   replaced, and drop it to ~0.25 when the graph merely grew, so the nodes
@@ -481,7 +479,7 @@ hovered/focused point rings, cluster labels, and the `pointIndexBy` /
 Not yet complete: point image atlas drawing. Point/link sampling and bounded
 point-position gathering are implemented and used by label policy.
 
-**On the data layer.** `src/data/` and the overlay/inline-label components are original work,
+**On the data layer.** `src/data/` and the React/inline-label components are original work,
 not a port. Their *feature set* is inspired by Cosmograph — column-driven
 encodings, labels, search, histograms — but the implementation is clean-room,
 built from public API documentation, because

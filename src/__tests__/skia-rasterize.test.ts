@@ -45,7 +45,7 @@ vi.mock('@shopify/react-native-skia', () => ({
   },
 }))
 
-const { mergeAdjacentLabelPatches, rasterizeLabelPatches } = await import('../skia/rasterize')
+const { configureFont, mergeAdjacentLabelPatches, rasterizeLabelPatches } = await import('../skia/rasterize')
 const { labelAtlasMetrics } = await import('../labels')
 
 beforeEach(() => {
@@ -57,6 +57,16 @@ beforeEach(() => {
 })
 
 describe('CPU Skia label rasterizer', () => {
+  it('configures stable advances without enabling the broken subpixel binding', () => {
+    const setLinearMetrics = vi.fn()
+    const setSubpixel = vi.fn()
+    const font = { setLinearMetrics, setSubpixel }
+
+    expect(configureFont(font as never)).toBe(font)
+    expect(setLinearMetrics).toHaveBeenCalledWith(true)
+    expect(setSubpixel).not.toHaveBeenCalled()
+  })
+
   it('batches cache misses into one surface and returns R8 patches', () => {
     const metrics = labelAtlasMetrics({
       fontSize: 12,

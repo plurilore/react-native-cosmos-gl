@@ -4,6 +4,7 @@ export {
   type LabelPerformanceSample,
 } from './CosmosSkiaLabels'
 export {
+  configureFont,
   rasterizeLabelPatches,
   mergeAdjacentLabelPatches,
   type LabelRasterRequest,
