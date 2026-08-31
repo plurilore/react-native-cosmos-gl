@@ -23,7 +23,7 @@
   "author": "react-native-cosmos-gl contributors",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nikitabraganov/react-native-cosmos-gl.git"
+    "url": "git+https://github.com/plurilore/react-native-cosmos-gl.git"
   },
   "main": "./lib/commonjs/index.js",
   "module": "./lib/module/index.js",
@@ -107,9 +107,9 @@
       ]
     ]
   },
-  "homepage": "https://github.com/nikitabraganov/react-native-cosmos-gl#readme",
+  "homepage": "https://github.com/plurilore/react-native-cosmos-gl#readme",
   "bugs": {
-    "url": "https://github.com/nikitabraganov/react-native-cosmos-gl/issues"
+    "url": "https://github.com/plurilore/react-native-cosmos-gl/issues"
   },
   "publishConfig": {
     "access": "public"

@@ -1,0 +1,48 @@
+name: Release
+
+# Publishes to npm when a version tag is pushed. Authentication is npm Trusted
+# Publishing (OIDC) — there is no token in this repo's secrets, and npm attaches
+# a provenance attestation automatically because the exchange proves which
+# workflow in which repo produced the tarball.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  id-token: write # Required for OIDC. Without it the token exchange fails.
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14.0; the
+          # Node 24 line ships an npm new enough on its own.
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Tag matches package.json
+        # A tag that disagrees with the manifest publishes a version nobody can
+        # find from the git history. Cheaper to fail here than to unpublish.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p 'require("./package.json").version')"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag does not match package.json version $pkg"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - name: Install the shader compiler
+        # prepublishOnly runs shaders:validate, which no-ops with a notice when
+        # glslang is absent. Installing it here makes that gate real for the one
+        # build that actually ships.
+        run: npm run shaders:tools
+
+      # prepublishOnly runs typecheck, lint, test, shaders:validate and build.
+      - run: npm publish
