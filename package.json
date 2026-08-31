@@ -76,6 +76,7 @@
     "d3-force": "^3.0.0",
     "eslint": "^10.9.1",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "expo-gl": "57.0.2",
     "react": "^19.2.8",
     "react-native": "0.86.3",
     "react-native-builder-bob": "^0.43.0",

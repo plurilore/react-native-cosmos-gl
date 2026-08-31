@@ -123,7 +123,7 @@ function Tab ({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: BACKGROUND },
-  graph: { ...StyleSheet.absoluteFillObject },
+  graph: StyleSheet.absoluteFill,
   overlay: { flex: 1, justifyContent: 'flex-end' },
   // Sits above the histogram, which anchors itself to the bottom of the graph.
   footer: { paddingBottom: 8, gap: 8, marginBottom: 120 },

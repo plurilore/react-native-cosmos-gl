@@ -156,7 +156,7 @@ function Chip ({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: BACKGROUND },
-  graph: { ...StyleSheet.absoluteFillObject },
+  graph: StyleSheet.absoluteFill,
   overlay: { flex: 1, justifyContent: 'space-between' },
   header: { paddingHorizontal: 20, paddingTop: 52 },
   title: { color: '#f2f5f9', fontSize: 22, fontWeight: '600', letterSpacing: -0.3 },
