@@ -17,6 +17,13 @@ export { collectCandidates, trackedPointIndices, type LabelSource } from './cand
 export { resolveCollisions } from './collision'
 export { packLabels, DEFAULT_MAX_HEIGHT, type PackedAtlas, type PackedSprite } from './packing'
 export {
+  LabelAtlasCache,
+  labelAtlasCacheKey,
+  type LabelAtlasLookup,
+  type LabelAtlasSlot,
+} from './atlas-cache'
+export { LabelRefreshScheduler, type LabelRefreshReason } from './scheduler'
+export {
   labelAtlasMetrics,
   labelSpriteTransform,
   snapToPixel,

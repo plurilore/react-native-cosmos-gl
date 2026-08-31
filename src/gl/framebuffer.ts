@@ -134,7 +134,13 @@ export class Framebuffer {
     const gl = this.device.gl
     this.device.bindFramebuffer(this.handle)
     if (this.drawBuffers.length > 1) gl.readBuffer(gl.COLOR_ATTACHMENT0 + attachment)
-    gl.readPixels(x, y, width, height, gl.RGBA, gl.FLOAT, out)
+    if (this.device.isPerformanceRecording) {
+      const startedAt = now()
+      gl.readPixels(x, y, width, height, gl.RGBA, gl.FLOAT, out)
+      this.device.recordReadback(width * height * 4 * Float32Array.BYTES_PER_ELEMENT, now() - startedAt)
+    } else {
+      gl.readPixels(x, y, width, height, gl.RGBA, gl.FLOAT, out)
+    }
     return out
   }
 
@@ -154,6 +160,10 @@ export class Framebuffer {
     this.destroy()
     for (const texture of attachments) texture.destroy()
   }
+}
+
+function now (): number {
+  return globalThis.performance?.now?.() ?? Date.now()
 }
 
 /**

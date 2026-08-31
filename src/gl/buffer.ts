@@ -40,6 +40,7 @@ export class GLBuffer {
     const gl = this.device.gl
     gl.bindBuffer(this.target, this.handle)
     gl.bufferData(this.target, byteLength, gl.DYNAMIC_DRAW)
+    this.device.recordBufferUpload(byteLength)
     this.capacity = byteLength
     this.byteLength = byteLength
   }
@@ -55,12 +56,14 @@ export class GLBuffer {
 
     if (byteOffset === 0 && data.byteLength > this.capacity) {
       gl.bufferData(this.target, data as unknown as BufferSource, gl.DYNAMIC_DRAW)
+      this.device.recordBufferUpload(data.byteLength)
       this.capacity = data.byteLength
       this.byteLength = data.byteLength
       return
     }
 
     gl.bufferSubData(this.target, byteOffset, data as unknown as BufferSource)
+    this.device.recordBufferUpload(data.byteLength)
     this.byteLength = Math.max(this.byteLength, byteOffset + data.byteLength)
   }
 

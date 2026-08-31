@@ -133,6 +133,7 @@ export class Model {
       } else {
         gl.drawElements(mode, count, gl.UNSIGNED_INT, 0)
       }
+      this.device.recordDrawCall()
       return
     }
 
@@ -142,6 +143,7 @@ export class Model {
     } else {
       gl.drawArrays(mode, 0, this.vertexCount)
     }
+    this.device.recordDrawCall()
   }
 
   private bindVertexArray (): void {

@@ -18,6 +18,7 @@ export type TextureFormat =
   | 'rgba32float'
   | 'rgba16float'
   | 'rgba8unorm'
+  | 'r8unorm'
   | 'rg32float'
   | 'r32float'
 

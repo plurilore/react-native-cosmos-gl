@@ -25,6 +25,8 @@ export type DeviceReport = {
   /** `EXT_float_blend` — additive blending into float targets. */
   floatBlend: boolean
   floatLinearFilter: boolean
+  /** Optional asynchronous GPU timing support for profiler builds. */
+  gpuTimerQueries: boolean
 
   maxTextureSize: number
   maxTextureArrayLayers: number
@@ -82,6 +84,7 @@ export function probeDevice (gl: GL): DeviceReport {
   const renderToFloat16 = renderToFloat32 || has('EXT_color_buffer_half_float')
   const floatBlend = has('EXT_float_blend')
   const floatLinearFilter = has('OES_texture_float_linear')
+  const gpuTimerQueries = has('EXT_disjoint_timer_query_webgl2')
 
   const maxTextureSize = param(gl.MAX_TEXTURE_SIZE, 0) as number
   const pointRange = param(gl.ALIASED_POINT_SIZE_RANGE, [1, 1]) as ArrayLike<number>
@@ -134,6 +137,7 @@ export function probeDevice (gl: GL): DeviceReport {
     renderToFloat16,
     floatBlend,
     floatLinearFilter,
+    gpuTimerQueries,
     maxTextureSize,
     maxTextureArrayLayers: param(gl.MAX_ARRAY_TEXTURE_LAYERS, 0) as number,
     maxTextureUnits: param(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS, 0) as number,
@@ -155,6 +159,7 @@ export function formatDeviceReport (report: DeviceReport): string {
     `float render targets: ${report.renderToFloat32 ? 'rgba32f' : report.renderToFloat16 ? 'rgba16f only' : 'NONE'}`,
     `float blend:          ${yes(report.floatBlend)}`,
     `float linear filter:  ${yes(report.floatLinearFilter)}`,
+    `GPU timer queries:    ${yes(report.gpuTimerQueries)}`,
     `max texture size:     ${report.maxTextureSize}`,
     `max point size:       ${report.maxPointSize}`,
     `est. max points:      ${report.estimatedMaxPoints.toLocaleString()}`,

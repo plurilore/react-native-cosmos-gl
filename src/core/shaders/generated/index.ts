@@ -17,6 +17,8 @@ export { forceManyBodyForceAllpairsFrag } from './force-many-body-force-allpairs
 export { forceManyBodyForceLevelFrag } from './force-many-body-force-level-frag'
 export { forceManyBodyForceNearfieldFrag } from './force-many-body-force-nearfield-frag'
 export { forceMouseForceMouseFrag } from './force-mouse-force-mouse-frag'
+export { labelsDrawLabelsFrag } from './labels-draw-labels-frag'
+export { labelsDrawLabelsVert } from './labels-draw-labels-vert'
 export { linesDrawCurveLineFrag } from './lines-draw-curve-line-frag'
 export { linesDrawCurveLineVert } from './lines-draw-curve-line-vert'
 export { linesFillSampledLinksFrag } from './lines-fill-sampled-links-frag'

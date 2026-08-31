@@ -55,8 +55,21 @@ export {
   type LabelPlacement,
   type PackedAtlas,
   type PackedSprite,
+  LabelAtlasCache,
+  labelAtlasCacheKey,
+  type LabelAtlasLookup,
+  type LabelAtlasSlot,
+  LabelRefreshScheduler,
+  type LabelRefreshReason,
 } from './labels'
 export { projectViewPoint, type ViewProjection } from './core/view-projection'
+export type {
+  LabelAtlasData,
+  LabelAtlasPatch,
+  LabelDrawData,
+  LabelRendererStats,
+} from './core/labels'
+export type { FramePerformanceSample } from './core/performance'
 export { CosmosClusterLabels, type CosmosClusterLabelsProps } from './react/CosmosClusterLabels'
 export { CosmosLegend, type CosmosLegendProps } from './react/CosmosLegend'
 export { CosmosSearch, type CosmosSearchProps } from './react/CosmosSearch'

@@ -63,6 +63,7 @@ export class Texture {
       : gl.NEAREST
 
     device.bindTexture(0, this.handle, this.target)
+    if (this.format === 'r8unorm') gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
     gl.texParameteri(this.target, gl.TEXTURE_MIN_FILTER, filter)
     gl.texParameteri(this.target, gl.TEXTURE_MAG_FILTER, filter)
     // Data textures are addressed by exact texel; clamping keeps an
@@ -78,6 +79,7 @@ export class Texture {
           this.target, 0, 0, 0, 0, this.width, this.height, this.depth,
           format, type, props.data as unknown as ArrayBufferView
         )
+        device.recordTextureUpload(props.data.byteLength)
       }
     } else {
       // texImage2D rather than texStorage2D: expo-gl's immutable-storage path
@@ -86,6 +88,7 @@ export class Texture {
         this.target, 0, internalFormat, this.width, this.height, 0,
         format, type, (props.data ?? null) as unknown as ArrayBufferView | null
       )
+      if (props.data) device.recordTextureUpload(props.data.byteLength)
     }
   }
 
@@ -95,6 +98,7 @@ export class Texture {
     const gl = this.device.gl
     const { internalFormat, format, type } = this.descriptor
     this.device.bindTexture(0, this.handle, this.target)
+    if (this.format === 'r8unorm') gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
     if (this.target === gl.TEXTURE_2D_ARRAY) {
       gl.texSubImage3D(
         this.target, 0, 0, 0, 0, this.width, this.height, this.depth,
@@ -106,6 +110,7 @@ export class Texture {
         format, type, data as unknown as ArrayBufferView | null
       )
     }
+    if (data) this.device.recordTextureUpload(data.byteLength)
   }
 
   /** Replaces a sub-rectangle. Cheaper than `write` when only part changed. */
@@ -121,11 +126,13 @@ export class Texture {
     const gl = this.device.gl
     const { format, type } = this.descriptor
     this.device.bindTexture(0, this.handle, this.target)
+    if (this.format === 'r8unorm') gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
     if (this.target === gl.TEXTURE_2D_ARRAY) {
       gl.texSubImage3D(this.target, 0, x, y, layer, width, height, 1, format, type, data as unknown as ArrayBufferView)
     } else {
       gl.texSubImage2D(this.target, 0, x, y, width, height, format, type, data as unknown as ArrayBufferView)
     }
+    this.device.recordTextureUpload(data.byteLength)
   }
 
   public get bytesPerPixel (): number {
@@ -155,5 +162,7 @@ function describeFormat (gl: GL, format: TextureFormat): FormatDescriptor {
       return { internalFormat: gl.R32F, format: gl.RED, type: gl.FLOAT, bytesPerPixel: 4, isFloat: true }
     case 'rgba8unorm':
       return { internalFormat: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE, bytesPerPixel: 4, isFloat: false }
+    case 'r8unorm':
+      return { internalFormat: gl.R8, format: gl.RED, type: gl.UNSIGNED_BYTE, bytesPerPixel: 1, isFloat: false }
   }
 }

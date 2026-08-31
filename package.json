@@ -34,6 +34,7 @@
     "src",
     "lib",
     "skia",
+    "docs",
     "README.md",
     "LICENSE",
     "!**/__tests__",

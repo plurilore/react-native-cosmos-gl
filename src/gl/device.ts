@@ -18,10 +18,24 @@ export type DeviceFeatures = {
   floatBlend: boolean
   /** `OES_texture_float_linear` — linear filtering of float textures. */
   floatLinearFilter: boolean
+  /** `EXT_disjoint_timer_query_webgl2` — asynchronous GPU duration samples. */
+  gpuTimerQueries: boolean
   maxTextureSize: number
   maxTextureArrayLayers: number
   maxColorAttachments: number
   maxTextureUnits: number
+}
+
+/** Cumulative host-side GL traffic counters. No driver queries are involved. */
+export type DevicePerformanceCounters = {
+  drawCalls: number
+  bufferUploads: number
+  bufferUploadBytes: number
+  textureUploads: number
+  textureUploadBytes: number
+  readbacks: number
+  readbackBytes: number
+  readbackMs: number
 }
 
 export class DeviceError extends Error {
@@ -45,6 +59,16 @@ export class Device {
   public readonly features: DeviceFeatures
   /** Set when the context is lost; every resource method becomes a no-op. */
   public isLost = false
+  private readonly performanceCounters: DevicePerformanceCounters = {
+    drawCalls: 0,
+    bufferUploads: 0,
+    bufferUploadBytes: 0,
+    textureUploads: 0,
+    textureUploadBytes: 0,
+    readbacks: 0,
+    readbackBytes: 0,
+    readbackMs: 0,
+  }
 
   private boundProgram: WebGLProgram | null = null
   private boundFramebuffer: WebGLFramebuffer | null = null
@@ -58,6 +82,11 @@ export class Device {
   /** Texture currently bound to each unit, so redundant binds are skipped. */
   private textureUnits: (WebGLTexture | null)[] = []
   private activeTextureUnit = -1
+  private readonly timerQueryExtension: TimerQueryExtension | undefined
+  private activeTimerQuery: WebGLQuery | undefined
+  private pendingTimerQuery: WebGLQuery | undefined
+  private timerQueriesFailed = false
+  private performanceObservers = 0
 
   public constructor (gl: GL) {
     // WebGL2 first, before probing anything else. `expo-gl` asks for an OpenGL
@@ -76,6 +105,9 @@ export class Device {
 
     this.gl = gl
     this.features = probeFeatures(gl)
+    this.timerQueryExtension = this.features.gpuTimerQueries
+      ? getTimerQueryExtension(gl)
+      : undefined
     this.textureUnits = new Array<WebGLTexture | null>(this.features.maxTextureUnits).fill(null)
 
     if (!this.features.renderToFloat32 && !this.features.renderToFloat16) {
@@ -85,6 +117,107 @@ export class Device {
         'velocities in float render targets and cannot run without one of them.'
       )
     }
+  }
+
+  public getPerformanceCounters (): DevicePerformanceCounters {
+    return { ...this.performanceCounters }
+  }
+
+  public get isPerformanceRecording (): boolean {
+    return this.performanceObservers > 0
+  }
+
+  /** Retains cheap host-side counters until the returned release is called. */
+  public enablePerformanceCounters (): () => void {
+    this.performanceObservers += 1
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.performanceObservers = Math.max(0, this.performanceObservers - 1)
+    }
+  }
+
+  public recordDrawCall (): void {
+    if (!this.isPerformanceRecording) return
+    this.performanceCounters.drawCalls += 1
+  }
+
+  public recordBufferUpload (bytes: number): void {
+    if (!this.isPerformanceRecording) return
+    this.performanceCounters.bufferUploads += 1
+    this.performanceCounters.bufferUploadBytes += bytes
+  }
+
+  public recordTextureUpload (bytes: number): void {
+    if (!this.isPerformanceRecording) return
+    this.performanceCounters.textureUploads += 1
+    this.performanceCounters.textureUploadBytes += bytes
+  }
+
+  public recordReadback (bytes: number, durationMs: number): void {
+    if (!this.isPerformanceRecording) return
+    this.performanceCounters.readbacks += 1
+    this.performanceCounters.readbackBytes += bytes
+    this.performanceCounters.readbackMs += durationMs
+  }
+
+  /** Starts an asynchronous whole-frame GPU timer when no older sample is pending. */
+  public beginGpuTimer (): void {
+    const extension = this.timerQueryExtension
+    if (!extension || this.timerQueriesFailed || this.activeTimerQuery || this.pendingTimerQuery) return
+    try {
+      const query = this.gl.createQuery()
+      if (!query) return
+      this.gl.beginQuery(extension.TIME_ELAPSED_EXT, query)
+      this.activeTimerQuery = query
+    } catch {
+      this.timerQueriesFailed = true
+    }
+  }
+
+  /** Closes the current timer without synchronously waiting for its result. */
+  public endGpuTimer (): void {
+    const extension = this.timerQueryExtension
+    const query = this.activeTimerQuery
+    if (!extension || !query) return
+    try {
+      this.gl.endQuery(extension.TIME_ELAPSED_EXT)
+      this.pendingTimerQuery = query
+    } catch {
+      this.gl.deleteQuery(query)
+      this.timerQueriesFailed = true
+    } finally {
+      this.activeTimerQuery = undefined
+    }
+  }
+
+  /** Returns a completed, non-disjoint GPU sample in milliseconds. Never blocks. */
+  public pollGpuTimer (): number | undefined {
+    const extension = this.timerQueryExtension
+    const query = this.pendingTimerQuery
+    if (!extension || !query || this.timerQueriesFailed) return undefined
+    try {
+      const available = Boolean(this.gl.getQueryParameter(query, this.gl.QUERY_RESULT_AVAILABLE))
+      if (!available) return undefined
+      const disjoint = Boolean(this.gl.getParameter(extension.GPU_DISJOINT_EXT))
+      const nanoseconds = Number(this.gl.getQueryParameter(query, this.gl.QUERY_RESULT))
+      this.gl.deleteQuery(query)
+      this.pendingTimerQuery = undefined
+      return !disjoint && Number.isFinite(nanoseconds) ? nanoseconds / 1_000_000 : undefined
+    } catch {
+      this.gl.deleteQuery(query)
+      this.pendingTimerQuery = undefined
+      this.timerQueriesFailed = true
+      return undefined
+    }
+  }
+
+  public destroyPerformanceResources (): void {
+    if (this.activeTimerQuery) this.gl.deleteQuery(this.activeTimerQuery)
+    if (this.pendingTimerQuery) this.gl.deleteQuery(this.pendingTimerQuery)
+    this.activeTimerQuery = undefined
+    this.pendingTimerQuery = undefined
   }
 
   /**
@@ -240,10 +373,29 @@ function probeFeatures (gl: GL): DeviceFeatures {
     renderToFloat16: has('EXT_color_buffer_half_float') || has('EXT_color_buffer_float'),
     floatBlend: has('EXT_float_blend'),
     floatLinearFilter: has('OES_texture_float_linear'),
+    gpuTimerQueries: has('EXT_disjoint_timer_query_webgl2'),
     maxTextureSize: param(gl.MAX_TEXTURE_SIZE, 2048),
     maxTextureArrayLayers: param(gl.MAX_ARRAY_TEXTURE_LAYERS, 256),
     maxColorAttachments: param(gl.MAX_COLOR_ATTACHMENTS, 4),
     maxTextureUnits: param(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS, 16),
+  }
+}
+
+type TimerQueryExtension = {
+  TIME_ELAPSED_EXT: number
+  GPU_DISJOINT_EXT: number
+}
+
+function getTimerQueryExtension (gl: GL): TimerQueryExtension | undefined {
+  try {
+    const extension = gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerQueryExtension | null
+    return extension &&
+      Number.isFinite(extension.TIME_ELAPSED_EXT) &&
+      Number.isFinite(extension.GPU_DISJOINT_EXT)
+      ? extension
+      : undefined
+  } catch {
+    return undefined
   }
 }
 

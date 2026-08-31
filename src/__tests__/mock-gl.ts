@@ -63,6 +63,12 @@ const GL_ENUMS: Record<string, number> = {
   RG32F: 0x8230,
   R32F: 0x822e,
   RGBA8: 0x8058,
+  R8: 0x8229,
+  UNPACK_ALIGNMENT: 0x0cf5,
+  QUERY_RESULT: 0x8866,
+  QUERY_RESULT_AVAILABLE: 0x8867,
+  TIME_ELAPSED_EXT: 0x88bf,
+  GPU_DISJOINT_EXT: 0x8fbb,
   DYNAMIC_DRAW: 0x88e8,
   NO_ERROR: 0,
   MAX_TEXTURE_SIZE: 0x0d33,
@@ -205,6 +211,8 @@ export type MockGLRecord = {
   /** Attribute names bound on a program that does not declare them. */
   missedAttributes: { program: string; name: string }[]
   drawCalls: number
+  timerQueries: number
+  pixelStoreCalls: { parameter: number; value: number }[]
   /** Every readback issued, so a test can assert what a pick actually read. */
   readPixelCalls: { x: number; y: number; width: number; height: number }[]
   /** Bytes of texture storage currently allocated, for memory accounting. */
@@ -253,6 +261,8 @@ export function createMockGL (options: {
     missedUniforms: [],
     missedAttributes: [],
     drawCalls: 0,
+    timerQueries: 0,
+    pixelStoreCalls: [],
     readPixelCalls: [],
     textureBytes: 0,
     peakTextureBytes: 0,
@@ -269,6 +279,7 @@ export function createMockGL (options: {
       case GL_ENUMS.RGBA16F: return 8
       case GL_ENUMS.RG32F: return 8
       case GL_ENUMS.R32F: return 4
+      case GL_ENUMS.R8: return 1
       default: return 4
     }
   }
@@ -392,6 +403,9 @@ export function createMockGL (options: {
     },
     activeTexture: () => undefined,
     texParameteri: () => undefined,
+    pixelStorei: (parameter: number, value: number) => {
+      record.pixelStoreCalls.push({ parameter, value })
+    },
     texImage2D: (
       _target: number, _level: number, internalFormat: number,
       width: number, height: number
@@ -440,6 +454,13 @@ export function createMockGL (options: {
     vertexAttribIPointer: () => undefined,
     vertexAttribDivisor: () => undefined,
 
+    createQuery: () => ({}),
+    beginQuery: () => { record.timerQueries += 1 },
+    endQuery: () => undefined,
+    getQueryParameter: (_query: object, parameter: number) =>
+      parameter === GL_ENUMS.QUERY_RESULT_AVAILABLE ? true : 4_000_000,
+    deleteQuery: () => undefined,
+
     enable: () => undefined,
     disable: () => undefined,
     blendFuncSeparate: () => undefined,
@@ -456,7 +477,16 @@ export function createMockGL (options: {
     drawElementsInstanced: () => { record.drawCalls += 1 },
 
     getError: () => GL_ENUMS.NO_ERROR,
-    getExtension: (name: string) => (available.has(name) ? {} : null),
+    getExtension: (name: string) => {
+      if (!available.has(name)) return null
+      if (name === 'EXT_disjoint_timer_query_webgl2') {
+        return {
+          TIME_ELAPSED_EXT: GL_ENUMS.TIME_ELAPSED_EXT,
+          GPU_DISJOINT_EXT: GL_ENUMS.GPU_DISJOINT_EXT,
+        }
+      }
+      return {}
+    },
     getParameter: (parameter: number) => {
       switch (parameter) {
         case GL_ENUMS.MAX_TEXTURE_SIZE: return 8192
@@ -464,6 +494,7 @@ export function createMockGL (options: {
         case GL_ENUMS.MAX_COLOR_ATTACHMENTS: return 8
         case GL_ENUMS.MAX_COMBINED_TEXTURE_IMAGE_UNITS: return 32
         case GL_ENUMS.ALIASED_POINT_SIZE_RANGE: return [1, 1024]
+        case GL_ENUMS.GPU_DISJOINT_EXT: return 0
         default: return 0
       }
     },

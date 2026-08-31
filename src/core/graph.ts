@@ -7,6 +7,7 @@ import { ZoomTransform, zoomIdentity } from './zoom-transform'
 import { Transition, TransitionProperty, currentTime } from './transition'
 import { Points } from './modules/points'
 import { Lines } from './modules/lines'
+import { Labels } from './modules/labels'
 import {
   ForceGravity,
   ForceCenter,
@@ -26,8 +27,28 @@ import type { GraphConfig, GraphConfigInterface, CosmosPointerEvent, FitViewBoun
 import { getRgbaColor } from './color'
 import type { ViewProjection } from './view-projection'
 import { textureSizeFor, clamp, boundScale } from './helper'
+import type {
+  LabelAtlasData,
+  LabelAtlasPatch,
+  LabelDrawData,
+  LabelRendererStats,
+} from './labels'
+import {
+  subtractPerformanceCounters,
+  type FramePerformanceSample,
+} from './performance'
+import type { DevicePerformanceCounters } from '../gl'
 
 export type { GraphConfig, GraphConfigInterface, FitViewBounds, ViewProjection }
+
+const EMPTY_LABEL_RENDERER_STATS: Readonly<LabelRendererStats> = Object.freeze({
+  atlasBytes: 0,
+  drawCalls: 0,
+  instanceUploads: 0,
+  instanceUploadBytes: 0,
+  atlasUploads: 0,
+  atlasUploadBytes: 0,
+})
 
 /**
  * A GPU-accelerated force graph.
@@ -48,6 +69,7 @@ export class Graph {
 
   public points: Points | undefined
   public lines: Lines | undefined
+  private labels: Labels | undefined
 
   private forceGravity: ForceGravity | undefined
   private forceCenter: ForceCenter | undefined
@@ -82,11 +104,15 @@ export class Graph {
   private readonly viewTransformListeners = new Set<(transform: ViewProjection) => void>()
   private readonly invalidateListeners = new Set<() => void>()
   private readonly frameListeners = new Set<(now: number) => void>()
+  private readonly performanceListeners = new Set<(sample: FramePerformanceSample) => void>()
+  private previousPerformanceCounters: DevicePerformanceCounters
+  private lastPerformanceSample: FramePerformanceSample | undefined
   /** Set whenever something that changes the picture happens. */
   private isFrameNeeded = true
 
   public constructor (gl: GL, config?: GraphConfig) {
     this.device = new Device(gl)
+    this.previousPerformanceCounters = this.device.getPerformanceCounters()
     this.config = createDefaultConfig()
     if (config) applyConfig(this.config, config)
 
@@ -111,6 +137,7 @@ export class Graph {
     this.points.transition = this.transition
     this.lines = new Lines(this.device, this.config, this.store, this.data, this.points)
     this.lines.transition = this.transition
+    this.labels = new Labels(this.points, this.store, this.zoomInstance)
 
     this.forceGravity = new ForceGravity(this.device, this.config, this.store, this.data, this.points)
     this.forceCenter = new ForceCenter(this.device, this.config, this.store, this.data, this.points)
@@ -307,6 +334,11 @@ export class Graph {
     const { points, lines } = this
     if (!points || !lines) return
 
+    const measuresPerformance = this.performanceListeners.size > 0
+    const frameStartedAt = measuresPerformance ? currentTime() : 0
+    const gpuMs = measuresPerformance ? this.device.pollGpuTimer() : undefined
+    if (measuresPerformance) this.device.beginGpuTimer()
+
     if (!this.hasInitialized) {
       points.create()
       lines.initPrograms()
@@ -324,16 +356,28 @@ export class Graph {
     this.zoomInstance.step(now)
 
     this.runSimulationStep()
-    // After every write to the position texture, so the label cache describes
-    // this frame rather than the one before it.
-    points.trackPoints()
-
     const [, , bufferWidth, bufferHeight] = viewport
     this.device.setViewport(0, 0, bufferWidth, bufferHeight)
     this.clearBackground()
 
     if (this.config.renderLinks) lines.draw(viewport, null)
     points.draw(viewport, null)
+    this.labels?.draw(viewport, null)
+
+    if (measuresPerformance) {
+      this.device.endGpuTimer()
+      const timestamp = currentTime()
+      const counters = this.device.getPerformanceCounters()
+      const sample: FramePerformanceSample = {
+        timestamp,
+        frameCpuMs: timestamp - frameStartedAt,
+        ...(gpuMs === undefined ? {} : { gpuMs }),
+        ...subtractPerformanceCounters(counters, this.previousPerformanceCounters),
+      }
+      this.previousPerformanceCounters = counters
+      this.lastPerformanceSample = sample
+      for (const listener of this.performanceListeners) listener(sample)
+    }
 
     // Cleared last: anything set during this frame's data or simulation work
     // has already been consumed by it.
@@ -395,10 +439,13 @@ export class Graph {
     this.forceMouse?.destroy()
     this.forceCollision?.destroy()
     this.clusters?.destroy()
+    this.labels?.destroy()
     this.lines?.destroy()
     this.points?.destroy()
     this.points = undefined
     this.lines = undefined
+    this.labels = undefined
+    this.device.destroyPerformanceResources()
   }
 
   // ---------------------------------------------------------------- view ---
@@ -891,6 +938,47 @@ export class Graph {
   }
 
   /**
+   * Gathers and reads only the requested current point positions.
+   *
+   * Registering these indices does not add a pass to every rendered frame.
+   * The gather runs here, when the caller actually needs a collision snapshot.
+   */
+  public getPointPositionsByIndices (indices: readonly number[]): Map<number, [number, number]> {
+    if (!this.points || indices.length === 0) return new Map()
+    this.points.trackPointsByIndices([...indices])
+    return this.points.getTrackedPositionsMap()
+  }
+
+  /** Creates or replaces the persistent single-channel inline-label atlas. */
+  public setLabelAtlas (data: LabelAtlasData): void {
+    this.labels?.setAtlas(data)
+    this.invalidate()
+  }
+
+  /** Uploads newly rasterized rectangles without replacing the atlas. */
+  public updateLabelAtlas (patches: LabelAtlasPatch | readonly LabelAtlasPatch[]): void {
+    this.labels?.updateAtlas(patches)
+    this.invalidate()
+  }
+
+  /** Replaces the visible inline-label instances. Equal object identity is a no-op. */
+  public setLabels (data: LabelDrawData): void {
+    this.labels?.setLabels(data)
+    this.invalidate()
+  }
+
+  /** Stops drawing inline labels while retaining the atlas for later reuse. */
+  public clearLabels (): void {
+    this.labels?.clear()
+    this.invalidate()
+  }
+
+  /** Cumulative inline-label counters, intended for profiler HUDs. */
+  public getLabelRendererStats (): Readonly<LabelRendererStats> {
+    return this.labels?.getStats() ?? EMPTY_LABEL_RENDERER_STATS
+  }
+
+  /**
    * One visible point per `distance`-pixel cell of the viewport, with its
    * simulation-space position.
    *
@@ -1021,6 +1109,23 @@ export class Graph {
     return () => {
       this.frameListeners.delete(listener)
     }
+  }
+
+  /** Subscribes to optional host-side GL counters. Disabled when nobody listens. */
+  public onPerformanceSample (listener: (sample: FramePerformanceSample) => void): () => void {
+    const stopRecording = this.device.enablePerformanceCounters()
+    if (this.performanceListeners.size === 0) {
+      this.previousPerformanceCounters = this.device.getPerformanceCounters()
+    }
+    this.performanceListeners.add(listener)
+    return () => {
+      this.performanceListeners.delete(listener)
+      stopRecording()
+    }
+  }
+
+  public getLastPerformanceSample (): FramePerformanceSample | undefined {
+    return this.lastPerformanceSample
   }
 
   private applyTransitionProgress (): void {

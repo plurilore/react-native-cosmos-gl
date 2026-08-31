@@ -6,13 +6,15 @@
 
 The force simulation and the rendering both run in GLSL. Point positions live in
 floating-point textures and are never read back into JavaScript to be drawn, so
-the cost of a frame is set by the GPU rather than by the bridge. Graphs of
-hundreds of thousands of points stay interactive on a phone.
+the ordinary draw path does not copy the graph across the bridge. Practical
+capacity depends on the phone, graph density and forces enabled; publishable
+performance numbers must name the device and workload.
 
 ```bash
 npm install react-native-cosmos-gl
 npx expo install expo-gl
-# Optional, for the Skia label renderer:
+# Optional label adapter. Reanimated is used only by its temporary overlay
+# fallback, but remains a peer while the runtime A/B switch is shipped.
 npx expo install @shopify/react-native-skia react-native-reanimated
 ```
 
@@ -20,9 +22,9 @@ Requires React 19, React Native 0.86, Expo SDK 57 and Node 20 or newer. This is
 a new package with no installed base to carry, so the floors are what the code
 needs rather than the oldest thing that might work.
 
-> **Pre-release.** The engine is covered by 215 tests against a mock WebGL2
+> **Pre-release.** The engine is covered by 287 tests against a mock WebGL2
 > context that parses each shader's real declarations, plus a shader gate that
-> compiles all 38 through the Khronos reference compiler. It now runs on
+> compiles all 40 through the Khronos reference compiler. It now runs on
 > physical Android hardware; **iOS has not been exercised**, so Metal-backed
 > shader compilation and the Skia label path there are unverified. Treat `0.x`
 > accordingly.
@@ -321,7 +323,8 @@ Three things are easy to get wrong, because none of them is linear:
 ## Labels
 
 `src/labels/` decides *what* should be drawn — candidates, priority bands,
-collision — and knows nothing about drawing. Two renderers consume it:
+collision and persistent atlas allocation — and knows nothing about a product's
+data model. Two renderers consume it:
 
 ```tsx
 import { CosmosSkiaLabels } from 'react-native-cosmos-gl/skia'
@@ -331,22 +334,32 @@ import { CosmosSkiaLabels } from 'react-native-cosmos-gl/skia'
 </CosmosGraph>
 ```
 
-`CosmosSkiaLabels` needs `@shopify/react-native-skia` — an optional peer
-dependency, so the GL engine still requires nothing but expo-gl. Prefer it:
-`<CosmosLabels>` renders one React Native view per label, and on device the
-compositing cost of that is real. Measured on a mid-range Android phone with
-the simulation and links switched off, fifty labels took a graph from 90fps to
-40. Views are composited every frame, so throttling the updates does not reach
-it; one canvas does.
+`CosmosSkiaLabels` defaults to `renderMode="inline"`. Skia rasterizes only cache
+misses into alpha patches on a CPU-backed offscreen surface; the graph retains a
+2048² R8 atlas and draws every visible label in one instanced GL call after the
+points. Point anchors are sampled from the live position texture in the vertex
+shader, so simulation and camera motion do not copy positions into JavaScript.
+Chip color, text color and corner radius are instance data and do not invalidate
+the text atlas.
+
+`renderMode="overlay"` retains the previous transparent Skia Canvas for one
+compatibility release and for A/B profiling. It needs Reanimated. It is
+event-driven and no longer runs an idle interval, but it still adds a second
+full-screen surface and therefore is not the default. `<CosmosLabels>` remains
+the accessible React Native text-view option for small sets.
 
 Two rules the label layer follows that are worth knowing:
 
 - **Cluster labels and point labels are alternatives.** With nothing selected
   the clusters name the regions; the moment anything is selected they give way
   to the points. Forced (`showLabelsFor`) and custom labels survive both.
-- **Anchors and text move on different clocks.** Positions come from the GPU
-  only while the simulation runs; the camera moves the anchors at display rate
-  through `onViewTransform`, and never scales the glyphs.
+- **Anchors and policy move on different clocks.** The shader moves point
+  anchors every graph frame. Candidate sampling and collision snapshots are
+  coalesced to at most 10Hz while motion is active and stop completely at idle.
+
+Low-level hosts can supply their own rasterizer through `setLabelAtlas`,
+`updateLabelAtlas`, `setLabels` and `clearLabels`; the core API contains no
+Skia, React Native or Atlas-specific type.
 
 ## Drawing only when there is something to draw
 
@@ -380,11 +393,12 @@ graph.onInvalidate(() => requestAnimationFrame(frame))
   (one all-pairs pass, no sampling noise). Above that it uses a Barnes-Hut grid
   pyramid closed by a depth-peeled Monte-Carlo near field.
 - **Avoid reading back.** `getPointPositions()` stalls the GPU pipeline. It is
-  fine on a tap; it is not fine per frame.
+  fine on a tap; it is not fine per frame. `getPointPositionsByIndices()` runs
+  a bounded gather only when called, and visible-point sampling is likewise
+  explicit.
 - **The frame loop is on the JS thread**, so anything else on it is paid in
-  frames. That is what makes label overlays the usual cost on a busy screen —
-  use `CosmosSkiaLabels` rather than `CosmosLabels` where you can, and keep the
-  graph's parent from re-rendering per frame.
+  frames. Inline labels share the graph surface and need no per-frame React,
+  Skia or Reanimated work; keep the graph's parent from re-rendering per frame.
 - **Adding points should not re-anneal the layout.** A position update restarts
   the simulation at `simulationRestartAlpha`; leave it at `1` when the data is
   replaced, and drop it to ~0.25 when the graph merely grew, so the nodes
@@ -464,19 +478,19 @@ Link hit-testing (`onLinkClick`, `onLinkMouseOver`, `onLinkContextMenu`), the
 hovered/focused point rings, cluster labels, and the `pointIndexBy` /
 `linkSourceIndexBy` index fast path are all implemented.
 
-Not yet ported: point image atlases, and point/link sampling for label
-placement. The shaders for both are in [`shaders/`](shaders/) and need only
-their module and wiring — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Not yet complete: point image atlas drawing. Point/link sampling and bounded
+point-position gathering are implemented and used by label policy.
 
-**On the data layer.** `src/data/` and the overlay components are original work,
+**On the data layer.** `src/data/` and the overlay/inline-label components are original work,
 not a port. Their *feature set* is inspired by Cosmograph — column-driven
 encodings, labels, search, histograms — but the implementation is clean-room,
 built from public API documentation, because
 [`@cosmograph/cosmograph`](https://www.npmjs.com/package/@cosmograph/cosmograph)
 is CC-BY-NC-4.0 with no public source repository — its code could not go into an
-MIT project even if it were available. Where the web library reaches for DuckDB
-and DOM widgets, this computes what it needs directly and renders native views,
-which is the right trade for a phone holding data already in memory.
+MIT project. Persistent-label behavior was studied only as public product
+behavior; this implementation is independent and uses the MIT cosmos.gl
+position texture as its rendering source. See
+[`docs/performance.md`](docs/performance.md) for the measurement protocol.
 
 ## License
 

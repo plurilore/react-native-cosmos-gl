@@ -12,6 +12,7 @@ import { useSharedValue } from 'react-native-reanimated'
 import { useCosmosGraph } from '../react/CosmosGraph'
 import {
   LabelManager,
+  LabelRefreshScheduler,
   createLabelLayoutBuffers,
   fillBuffers,
   layoutLabels,
@@ -24,6 +25,12 @@ import {
 } from '../labels'
 import { MAX_LABELS, bakeAtlas, configureFont, type BakedAtlas } from './bake'
 import { projectViewPoint, type ViewProjection } from '../core/view-projection'
+import {
+  CosmosInlineSkiaLabels,
+  type LabelPerformanceSample,
+} from './CosmosInlineSkiaLabels'
+
+export type { LabelPerformanceSample } from './CosmosInlineSkiaLabels'
 
 export type CosmosSkiaLabelsProps = LabelPolicy & {
   /** A font file, as `require('./Inter.ttf')`, or a loaded `SkFont`. */
@@ -47,9 +54,13 @@ export type CosmosSkiaLabelsProps = LabelPolicy & {
   clusters?: readonly { index: number; name: string; count: number; position: [number, number] }[]
   /** Reports how long a selection pass took, and how many labels it produced. */
   onMeasure?: (durationMs: number, count: number) => void
+  /** Inline draws in the graph framebuffer; overlay retains the legacy Skia Canvas for A/B checks. */
+  renderMode?: 'inline' | 'overlay'
+  /** Detailed timing and cache counters for profiler HUDs. */
+  onPerformanceSample?: (sample: LabelPerformanceSample) => void
 }
 
-/** Where a parked slot goes. Far enough that no viewport can contain it. */
+/** Where a legacy overlay's parked slot goes. */
 const PARKED = -100_000
 
 const DEFAULT_FONT_SIZE = 12
@@ -58,30 +69,22 @@ const DEFAULT_PADDING = [5, 3, 5, 3] as const
 const DEFAULT_INTERVAL = 90
 
 /**
- * Graph labels drawn as one atlas.
+ * Graph labels backed by persistent text assets.
  *
- * The design follows from what a pan actually changes. Labels move on every
- * frame of a gesture, but almost nothing about them *changes*: the text is the
- * same, so its measured width is the same, and so is which labels were chosen
- * and what they outrank. Only the projection depends on the camera.
- *
- * So the work is split by what it depends on:
- *
- * - **The data clock** — a timer, plus set changes — selects labels, measures
- *   them once, and bakes them into a single texture. This is the only part
- *   that touches React.
- * - **The camera clock** — every frame, on the render thread — projects the
- *   anchors and resolves overlaps into a transform buffer. It allocates
- *   nothing, crosses no thread boundary, and draws through one call.
- *
- * The camera path therefore performs **no React render and no JS-thread work**
- * beyond a single assignment. That is the whole point, and it is directly
- * checkable: if a pan causes a React commit, this is not working.
- *
- * Text is baked at a fixed size and never scaled by the camera; only the
- * anchor moves. Labels are screen-space furniture, not part of the scene.
+ * Inline mode is the production path: Skia rasterizes cache misses offscreen,
+ * then one instanced GL draw projects live point anchors from the position
+ * texture. The legacy transparent Canvas remains selectable for compatibility
+ * and A/B traces. Both policy clocks are event-driven and park at idle.
  */
-export function CosmosSkiaLabels ({
+export function CosmosSkiaLabels (props: CosmosSkiaLabelsProps): React.ReactElement | null {
+  const { renderMode = 'inline', ...labels } = props
+  if (renderMode === 'inline') return <CosmosInlineSkiaLabels {...labels} />
+  return <LegacyCosmosSkiaLabels {...labels} />
+}
+
+type LegacyCosmosSkiaLabelsProps = Omit<CosmosSkiaLabelsProps, 'renderMode'>
+
+function LegacyCosmosSkiaLabels ({
   font: fontSource,
   fontSize = DEFAULT_FONT_SIZE,
   color = '#f8fafc',
@@ -91,8 +94,9 @@ export function CosmosSkiaLabels ({
   updateIntervalMs = DEFAULT_INTERVAL,
   clusters,
   onMeasure,
+  onPerformanceSample: _onPerformanceSample,
   ...policy
-}: CosmosSkiaLabelsProps): React.ReactElement | null {
+}: LegacyCosmosSkiaLabelsProps): React.ReactElement | null {
   const { graph, resolved, isReady, selectedPointIndices } = useCosmosGraph()
 
   /**
@@ -136,9 +140,11 @@ export function CosmosSkiaLabels ({
     if (!font) return
     configureFont(font)
     manager.reset()
+    atlasKeyRef.current = ''
   }, [font, manager])
   const buffers = useMemo(() => createLabelLayoutBuffers(MAX_LABELS), [])
   const [atlas, setAtlas] = useState<BakedAtlas | null>(null)
+  const atlasKeyRef = useRef('')
 
   // Anchors in simulation space, refreshed on the slow clock only.
   const anchorsRef = useRef(new Map<number, [number, number]>())
@@ -210,7 +216,13 @@ export function CosmosSkiaLabels ({
     // labels overlap — it moves them all equally — so this only goes stale
     // under zoom, and never for longer than one interval.
     layoutLabels(buffers, graph.getViewProjection())
-    setAtlas(bakeAtlas(selected, metrics, font, color, chipColor))
+    const atlasKey = `${color}|${chipColor ?? ''}|${metrics.fontSize}|${selected.map((label) => label.text).join('\u0000')}`
+    if (atlasKey !== atlasKeyRef.current) {
+      // React Compiler cannot prove this callback runs outside render.
+      // eslint-disable-next-line react-hooks/immutability
+      atlasKeyRef.current = atlasKey
+      setAtlas(bakeAtlas(selected, metrics, font, color, chipColor))
+    }
     placement.value = toLabelPlacement(buffers)
     onMeasure?.(Date.now() - startedAt, selected.length)
     // `policy` is spread from props and rebuilt every render; `policyKey` is
@@ -234,10 +246,11 @@ export function CosmosSkiaLabels ({
     rankedRef.current = indices
   }, [resolved])
 
-  // The data clock.
+  // Event-driven data clock. A timeout exists only while the graph is moving;
+  // there is no recurring idle timer.
   useEffect(() => {
     if (!graph || !isReady) return
-
+    let wasRunning = graph.isSimulationRunning
     const refresh = (): void => {
       const tracked = manager.tracked(
         { rankedByWeight: rankedRef.current, selected: selectedPointIndices ?? [] },
@@ -251,10 +264,23 @@ export function CosmosSkiaLabels ({
       reselect()
     }
 
-    refresh()
-    const timer = setInterval(refresh, updateIntervalMs)
+    const scheduler = new LabelRefreshScheduler(() => refresh(), updateIntervalMs, Date.now)
+
+    scheduler.request('initial', true)
+    const stopFrames = graph.onFrame(() => {
+      if (graph.isSimulationRunning) {
+        wasRunning = true
+        scheduler.request('frame')
+      } else if (wasRunning) {
+        wasRunning = false
+        scheduler.request('frame', true)
+      }
+    })
+    const stopView = graph.onViewTransform(() => scheduler.request('view'))
     return () => {
-      clearInterval(timer)
+      stopFrames()
+      stopView()
+      scheduler.cancel()
       graph.trackPointsByIndices(undefined)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

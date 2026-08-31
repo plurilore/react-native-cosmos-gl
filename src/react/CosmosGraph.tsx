@@ -24,6 +24,8 @@ import {
 import { Graph } from '../core/graph'
 import type { GraphConfig, FitViewBounds } from '../core/config'
 import type { PointImageData } from '../core/graph-data'
+import type { LabelAtlasData, LabelAtlasPatch, LabelDrawData, LabelRendererStats } from '../core/labels'
+import type { FramePerformanceSample } from '../core/performance'
 import type { Rgba } from '../core/color'
 import type { ColorStrategy, SizeStrategy, LinkWidthStrategy } from '../data/encode'
 import { GestureController } from './gestures'
@@ -197,6 +199,8 @@ export type CosmosGraphProps = GraphConfig & {
   onReady?: (graph: Graph) => void
   /** Fires if the surface or the engine could not be created. */
   onError?: (error: Error) => void
+  /** Optional host/GL counters. Enabling it adds only timestamp and counter reads. */
+  onFramePerformanceSample?: (sample: FramePerformanceSample) => void
 
   /**
    * Overlays rendered above the graph surface.
@@ -299,11 +303,18 @@ export type CosmosGraphRef = {
   trackPointsByIndices: (indices?: number[]) => void
   /** Tracked positions in simulation space, by point index. */
   getTrackedPointPositions: () => Map<number, [number, number]>
+  /** Gathers and reads only these positions, with no continuous per-frame tracking pass. */
+  getPointPositionsByIndices: (indices: readonly number[]) => Map<number, [number, number]>
   /**
    * One visible point per `distance`-pixel cell of the viewport, with its
    * simulation-space position — the candidate set for a label layer.
    */
   sampleVisiblePointIndices: (distance?: number) => Map<number, [number, number]>
+  setLabelAtlas: (data: LabelAtlasData) => void
+  updateLabelAtlas: (patches: LabelAtlasPatch | readonly LabelAtlasPatch[]) => void
+  setLabels: (data: LabelDrawData) => void
+  clearLabels: () => void
+  getLabelRendererStats: () => Readonly<LabelRendererStats>
   /** The current view transform: scale and translation, screen pixels. */
   getViewProjection: () => { k: number; x: number; y: number }
   /** Subscribes to view-transform changes. Returns an unsubscribe. */
@@ -314,6 +325,8 @@ export type CosmosGraphRef = {
   invalidate: () => void
   /** Subscribes to drawn frames. Returns an unsubscribe. */
   onFrame: (listener: (now: number) => void) => () => void
+  onPerformanceSample: (listener: (sample: FramePerformanceSample) => void) => () => void
+  getLastPerformanceSample: () => FramePerformanceSample | undefined
   /** Simulation space to screen pixels, under the current view transform. */
   spaceToScreenPosition: (position: [number, number]) => [number, number]
   /** Screen pixels to simulation space, under the current view transform. */
@@ -348,6 +361,10 @@ export type CosmosGraphRef = {
 /** A search hit. */
 export type CosmosSearchResult = SearchResult
 
+function now (): number {
+  return globalThis.performance?.now?.() ?? Date.now()
+}
+
 /**
  * A GPU force graph as a React Native view.
  *
@@ -371,7 +388,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     linkWidthBy, linkWidthRange, linkWidthByFn, linkWidthStrategy, linkStrengthBy, linkStrengthRange,
     selectPointOnClick, selectNeighborsOnClick, resetSelectionOnBackgroundClick,
     onSelectionChange, onDataResolved, simulationRestartAlpha = 1,
-    style, msaaSamples = 0, onReady, onError, children,
+    style, msaaSamples = 0, onReady, onError, onFramePerformanceSample, children,
     ...config
   } = props
 
@@ -380,8 +397,13 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
   const gesturesRef = useRef<GestureController | undefined>(undefined)
   const frameRef = useRef<number | undefined>(undefined)
   const unsubscribeInvalidateRef = useRef<(() => void) | undefined>(undefined)
+  const unsubscribePerformanceRef = useRef<(() => void) | undefined>(undefined)
   const sizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 })
   const [isReady, setIsReady] = useState(false)
+  const onFramePerformanceSampleRef = useRef(onFramePerformanceSample)
+  useEffect(() => {
+    onFramePerformanceSampleRef.current = onFramePerformanceSample
+  }, [onFramePerformanceSample])
 
   // Config is read fresh every frame, so a prop change must not need a
   // re-render to take effect — the ref is what the frame loop sees.
@@ -504,7 +526,22 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     graph.render([0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight])
     // expo-gl batches commands and only presents on this call; without it the
     // frame is computed and never shown.
-    gl.endFrameEXP()
+    const performanceObserver = onFramePerformanceSampleRef.current
+    if (!performanceObserver) {
+      gl.endFrameEXP()
+    } else {
+      const presentStartedAt = now()
+      gl.endFrameEXP()
+      const presentMs = now() - presentStartedAt
+      const coreSample = graph.getLastPerformanceSample()
+      if (coreSample) {
+        performanceObserver({
+          ...coreSample,
+          presentMs,
+          totalHostMs: coreSample.frameCpuMs + presentMs,
+        })
+      }
+    }
 
     if (graph.needsFrame) {
       frameRef.current = requestAnimationFrame(renderFrame)
@@ -658,9 +695,24 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReady, resolved])
 
+  const measuresFramePerformance = onFramePerformanceSample !== undefined
+  useEffect(() => {
+    unsubscribePerformanceRef.current?.()
+    unsubscribePerformanceRef.current = undefined
+    const graph = graphRef.current
+    if (!isReady || !graph || !measuresFramePerformance) return
+    unsubscribePerformanceRef.current = graph.onPerformanceSample(() => undefined)
+    return () => {
+      unsubscribePerformanceRef.current?.()
+      unsubscribePerformanceRef.current = undefined
+    }
+  }, [isReady, measuresFramePerformance])
+
   useEffect(() => () => {
     unsubscribeInvalidateRef.current?.()
     unsubscribeInvalidateRef.current = undefined
+    unsubscribePerformanceRef.current?.()
+    unsubscribePerformanceRef.current = undefined
     if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current)
     graphRef.current?.destroy()
     graphRef.current = undefined
@@ -685,13 +737,30 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     getZoomLevel: () => graphRef.current?.getZoomLevel() ?? 1,
     trackPointsByIndices: (indices) => graphRef.current?.trackPointsByIndices(indices),
     getTrackedPointPositions: () => graphRef.current?.getTrackedPointPositionsMap() ?? new Map(),
+    getPointPositionsByIndices: (indices) =>
+      graphRef.current?.getPointPositionsByIndices(indices) ?? new Map(),
     sampleVisiblePointIndices: (distance) =>
       graphRef.current?.sampleVisiblePointIndices(distance) ?? new Map(),
+    setLabelAtlas: (data) => graphRef.current?.setLabelAtlas(data),
+    updateLabelAtlas: (patches) => graphRef.current?.updateLabelAtlas(patches),
+    setLabels: (data) => graphRef.current?.setLabels(data),
+    clearLabels: () => graphRef.current?.clearLabels(),
+    getLabelRendererStats: () => graphRef.current?.getLabelRendererStats() ?? {
+      atlasBytes: 0,
+      drawCalls: 0,
+      instanceUploads: 0,
+      instanceUploadBytes: 0,
+      atlasUploads: 0,
+      atlasUploadBytes: 0,
+    },
     getViewProjection: () => graphRef.current?.getViewProjection() ?? { k: 1, x: 0, y: 0 },
     onViewTransform: (listener) => graphRef.current?.onViewTransform(listener) ?? (() => undefined),
     needsFrame: () => graphRef.current?.needsFrame ?? false,
     invalidate: () => graphRef.current?.invalidate(),
     onFrame: (listener) => graphRef.current?.onFrame(listener) ?? (() => undefined),
+    onPerformanceSample: (listener) =>
+      graphRef.current?.onPerformanceSample(listener) ?? (() => undefined),
+    getLastPerformanceSample: () => graphRef.current?.getLastPerformanceSample(),
     spaceToScreenPosition: (position) => graphRef.current?.spaceToScreenPosition(position) ?? position,
     screenToSpacePosition: (position) => graphRef.current?.screenToSpacePosition(position) ?? position,
     getPointPositions: () => graphRef.current?.getPointPositions() ?? new Float32Array(),
@@ -748,12 +817,14 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
 
   const panResponder = useTouchHandling(gesturesRef)
   const GLView = useMemo(() => getGLView(), [])
+  const effectiveSelectedPointIndices =
+    selectionConfig.highlightedPointIndices ?? config.highlightedPointIndices
 
   const contextValue = useMemo((): CosmosGraphContextValue => ({
     graph: graphRef.current,
     resolved,
     isReady,
-    selectedPointIndices: selectionConfig.highlightedPointIndices,
+    selectedPointIndices: effectiveSelectedPointIndices,
     selectPoints: (indices, options) => {
       const graph = graphRef.current
       if (!graph) return
@@ -768,7 +839,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
       onSelectionChangeRef.current?.(undefined, undefined)
     },
     searchPoints: (query, limit = 20) => searchPoints(resolvedRef.current, query, limit),
-  }), [resolved, isReady, selectionConfig.highlightedPointIndices])
+  }), [resolved, isReady, effectiveSelectedPointIndices])
 
   return (
     <View style={[styles.container, style]} onLayout={onLayout}>
@@ -996,4 +1067,3 @@ function touchMidpoint (touches: readonly Touch[]): [number, number] {
 const styles = StyleSheet.create({
   container: { flex: 1, overflow: 'hidden' },
 })
-

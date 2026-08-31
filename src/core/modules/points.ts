@@ -940,7 +940,9 @@ export class Points extends CoreModule {
       return
     }
 
-    this.trackedIndices = indices
+    if (this.trackedIndices && numberArraysEqual(this.trackedIndices, indices)) return
+
+    this.trackedIndices = [...indices]
     this.isPositionsUpToDate = false
     const size = textureSizeFor(indices.length)
 
@@ -975,8 +977,8 @@ export class Points extends CoreModule {
   /**
    * Gathers the tracked points' current positions into the small cache texture.
    *
-   * Must run after every write to `currentPositionTexture` — the simulation
-   * tick, a drag, a transition frame — or the cache describes the frame before.
+   * Called immediately before an on-demand read. Position writes invalidate
+   * the CPU snapshot; they do not schedule this GPU pass on their own.
    */
   public trackPoints (): void {
     const command = this.trackPointsCommand
@@ -1001,6 +1003,11 @@ export class Points extends CoreModule {
     const fbo = this.trackedPositionsFbo
     if (!indices || !fbo) return new Map()
     if (this.isPositionsUpToDate && this.trackedPositions) return this.trackedPositions
+
+    // Gathering is deliberately demand-driven. The old path ran this pass in
+    // every graph frame merely because a label layer had registered indices,
+    // even though that layer only read them about ten times per second.
+    this.trackPoints()
 
     const size = fbo.width
     const pixels = new Float32Array(size * size * 4)
