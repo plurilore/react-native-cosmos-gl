@@ -36,6 +36,7 @@
     "skia",
     "docs",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "!**/__tests__",
     "!**/*.test.ts"
