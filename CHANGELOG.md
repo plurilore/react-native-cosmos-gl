@@ -9,6 +9,23 @@ release that stabilizes the API will say so here.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-01
+
+### Changed
+
+- `<CosmosGraph />` touch input now uses composed native pan, pinch, long-press
+  and tap recognisers. It requires `react-native-gesture-handler >= 2.32` and a
+  `GestureHandlerRootView` above the graph.
+
+### Fixed
+
+- Pan, pinch and every sequence containing multiple pointers are resolved
+  before point, link or background press callbacks can fire.
+- Pan and pinch transitions end each controller gesture once and reset the pan
+  translation baseline before panning resumes.
+- Android terminal pinch samples with fewer than two pointers are discarded,
+  preventing the focal-point change at release from shifting the camera.
+
 ## [0.1.0] - 2026-08-31
 
 Initial release. A port of [cosmos.gl](https://github.com/cosmosgl/graph) to
@@ -71,5 +88,6 @@ the bridge to be drawn.
 
 - Point image atlas drawing.
 
-[Unreleased]: https://github.com/plurilore/react-native-cosmos-gl/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/plurilore/react-native-cosmos-gl/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/plurilore/react-native-cosmos-gl/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/plurilore/react-native-cosmos-gl/releases/tag/v0.1.0

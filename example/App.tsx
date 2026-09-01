@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { View, Text, Pressable, StyleSheet, SafeAreaView, StatusBar } from 'react-native'
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import TypedArraysScreen from './src/TypedArraysScreen'
 import OrgGraphScreen from './src/OrgGraphScreen'
@@ -16,7 +17,7 @@ export default function App (): React.ReactElement {
   const [screen, setScreen] = useState<'records' | 'arrays' | 'device'>('records')
 
   return (
-    <View style={styles.root}>
+    <GestureHandlerRootView style={styles.root}>
       {/* React Native's own StatusBar, so the example typechecks and runs
           without pulling in expo-status-bar. */}
       <StatusBar barStyle="light-content" />
@@ -31,7 +32,7 @@ export default function App (): React.ReactElement {
           <Segment label="Device" isActive={screen === 'device'} onPress={() => setScreen('device')} />
         </View>
       </SafeAreaView>
-    </View>
+    </GestureHandlerRootView>
   )
 }
 

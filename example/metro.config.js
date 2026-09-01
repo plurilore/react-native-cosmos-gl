@@ -18,7 +18,7 @@ config.resolver.extraNodeModules = {
 }
 // React and React Native must resolve to exactly one copy; two would give the
 // classic "invalid hook call" with no useful stack.
-for (const name of ['react', 'react-native', 'expo-gl']) {
+for (const name of ['react', 'react-native', 'react-native-gesture-handler', 'expo-gl']) {
   config.resolver.extraNodeModules[name] = path.resolve(__dirname, 'node_modules', name)
 }
 

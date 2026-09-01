@@ -10,16 +10,13 @@ import React, {
 } from 'react'
 import {
   View,
-  PanResponder,
   PixelRatio,
   StyleSheet,
   type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle,
-  type GestureResponderEvent,
-  type PanResponderGestureState,
-  type PanResponderInstance,
 } from 'react-native'
+import { GestureDetector } from 'react-native-gesture-handler'
 
 import { Graph } from '../core/graph'
 import type { GraphConfig, FitViewBounds } from '../core/config'
@@ -30,6 +27,7 @@ import type { Rgba } from '../core/color'
 import type { ColorStrategy, SizeStrategy, LinkWidthStrategy } from '../data/encode'
 import { GestureController } from './gestures'
 import { getGLView, type ExpoWebGLRenderingContext } from './gl-view'
+import { useNativeGestureHandling } from './native-gesture-handler'
 import { resolveGraphData, type GraphDataMapping, type ResolvedGraphData } from '../data/resolve'
 import { Selection } from '../data/selection'
 import type { Row } from '../data/data-frame'
@@ -43,12 +41,6 @@ import { searchPoints, type SearchResult } from '../data/search'
  * detail, and the frame budget is better spent on the simulation.
  */
 const MAX_PIXEL_RATIO = 2
-
-/** Movement, in points, beyond which a touch stops being a tap. */
-const TAP_SLOP = 8
-
-/** Hold duration, in ms, that turns a touch into a long press. */
-const LONG_PRESS_DURATION = 500
 
 export type CosmosGraphProps = GraphConfig & {
   /** Point positions as `[x0, y0, x1, y1, …]`. Sets the index space for everything else. */
@@ -815,7 +807,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     searchPoints: (query, limit = 20) => searchPoints(resolvedRef.current, query, limit),
   }), [])
 
-  const panResponder = useTouchHandling(gesturesRef)
+  const touchGesture = useNativeGestureHandling(gesturesRef)
   const GLView = useMemo(() => getGLView(), [])
   const effectiveSelectedPointIndices =
     selectionConfig.highlightedPointIndices ?? config.highlightedPointIndices
@@ -846,9 +838,11 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
       {/* Touch handlers live on the surface, not the container, so overlay
           children stay independently interactive — a tappable search result
           must not also pan the graph underneath it. */}
-      <View style={StyleSheet.absoluteFill} {...panResponder.panHandlers}>
-        <GLView style={StyleSheet.absoluteFill} msaaSamples={msaaSamples} onContextCreate={onContextCreate} />
-      </View>
+      <GestureDetector gesture={touchGesture}>
+        <View collapsable={false} style={StyleSheet.absoluteFill}>
+          <GLView style={StyleSheet.absoluteFill} msaaSamples={msaaSamples} onContextCreate={onContextCreate} />
+        </View>
+      </GestureDetector>
       {children ? (
         <CosmosGraphContext.Provider value={contextValue}>
           {children}
@@ -893,175 +887,6 @@ function applyConfigDelta (graph: Graph, next: GraphConfig, written: Map<string,
   }
 
   if (hasDelta) graph.setConfigPartial(delta as GraphConfig)
-}
-
-/**
- * Touch handling on `PanResponder`.
- *
- * Chosen over `react-native-gesture-handler` so the library has no gesture
- * dependency at all: the engine is JS-driven anyway — the render loop, the
- * transform, and picking all live on the JS thread — so a gesture library that
- * runs on the UI thread would have to hop back for every update and buys
- * nothing here. Consumers who want RNGH or Reanimated can drive the exported
- * `GestureController` themselves.
- */
-function useTouchHandling (
-  gesturesRef: React.MutableRefObject<GestureController | undefined>
-): PanResponderInstance {
-  const stateRef = useRef({
-    isPinching: false,
-    initialDistance: 0,
-    startX: 0,
-    startY: 0,
-    longPressTimer: undefined as ReturnType<typeof setTimeout> | undefined,
-    didLongPress: false,
-    didMove: false,
-  })
-
-  const clearLongPress = useCallback(() => {
-    const timer = stateRef.current.longPressTimer
-    if (timer !== undefined) clearTimeout(timer)
-    stateRef.current.longPressTimer = undefined
-  }, [])
-
-  const responder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    // Claim the gesture even if a parent scroll view wants it: a graph fills
-    // its area and pans in both axes, so handing off on a vertical drag would
-    // make the view unusable inside a scroll container.
-    onMoveShouldSetPanResponderCapture: () => true,
-
-    onPanResponderGrant: (event: GestureResponderEvent) => {
-      const gestures = gesturesRef.current
-      if (!gestures) return
-      const touches = event.nativeEvent.touches
-      const state = stateRef.current
-      state.didMove = false
-      state.didLongPress = false
-
-      if (touches.length >= 2) {
-        state.isPinching = true
-        state.initialDistance = touchDistance(touches)
-        gestures.onPinchStart()
-        return
-      }
-
-      const { locationX, locationY } = event.nativeEvent
-      state.startX = locationX
-      state.startY = locationY
-      state.isPinching = false
-      gestures.onPanStart(locationX, locationY)
-
-      state.longPressTimer = setTimeout(() => {
-        if (stateRef.current.didMove) return
-        stateRef.current.didLongPress = true
-        gestures.onLongPress(locationX, locationY)
-      }, LONG_PRESS_DURATION)
-    },
-
-    onPanResponderMove: (event: GestureResponderEvent, gestureState: PanResponderGestureState) => {
-      const gestures = gesturesRef.current
-      if (!gestures) return
-      const touches = event.nativeEvent.touches
-      const state = stateRef.current
-
-      if (Math.abs(gestureState.dx) > TAP_SLOP || Math.abs(gestureState.dy) > TAP_SLOP) {
-        state.didMove = true
-        clearLongPress()
-      }
-
-      // A second finger can arrive mid-pan; switch modes rather than ignoring it.
-      if (touches.length >= 2) {
-        if (!state.isPinching) {
-          state.isPinching = true
-          state.initialDistance = touchDistance(touches)
-          gestures.onPanEnd(state.startX, state.startY)
-          gestures.onPinchStart()
-        }
-        const distance = touchDistance(touches)
-        if (state.initialDistance > 0) {
-          const [focalX, focalY] = touchMidpoint(touches)
-          gestures.onPinchUpdate(distance / state.initialDistance, focalX, focalY)
-        }
-        return
-      }
-
-      // Dropping to one finger ends the pinch and starts a fresh pan from
-      // wherever that finger now is, so the view does not jump.
-      if (state.isPinching) {
-        state.isPinching = false
-        gestures.onPinchEnd()
-        gestures.onPanStart(event.nativeEvent.locationX, event.nativeEvent.locationY)
-        state.startX = event.nativeEvent.locationX
-        state.startY = event.nativeEvent.locationY
-        return
-      }
-
-      gestures.onPanUpdate(
-        event.nativeEvent.locationX,
-        event.nativeEvent.locationY,
-        gestureState.dx,
-        gestureState.dy
-      )
-    },
-
-    onPanResponderRelease: (event: GestureResponderEvent, gestureState: PanResponderGestureState) => {
-      const gestures = gesturesRef.current
-      const state = stateRef.current
-      clearLongPress()
-      if (!gestures) return
-
-      if (state.isPinching) {
-        state.isPinching = false
-        gestures.onPinchEnd()
-        return
-      }
-
-      gestures.onPanEnd(state.startX, state.startY)
-
-      const isTap = !state.didLongPress &&
-        Math.abs(gestureState.dx) <= TAP_SLOP &&
-        Math.abs(gestureState.dy) <= TAP_SLOP
-      if (isTap) gestures.onTap(state.startX, state.startY)
-      void event
-    },
-
-    onPanResponderTerminate: () => {
-      const gestures = gesturesRef.current
-      const state = stateRef.current
-      clearLongPress()
-      if (!gestures) return
-      if (state.isPinching) {
-        state.isPinching = false
-        gestures.onPinchEnd()
-      } else {
-        gestures.onPanEnd(state.startX, state.startY)
-      }
-    },
-  }), [clearLongPress, gesturesRef])
-
-  useEffect(() => clearLongPress, [clearLongPress])
-
-  return responder
-}
-
-type Touch = { locationX: number; locationY: number }
-
-function touchDistance (touches: readonly Touch[]): number {
-  const a = touches[0]
-  const b = touches[1]
-  if (!a || !b) return 0
-  const dx = a.locationX - b.locationX
-  const dy = a.locationY - b.locationY
-  return Math.sqrt(dx * dx + dy * dy)
-}
-
-function touchMidpoint (touches: readonly Touch[]): [number, number] {
-  const a = touches[0]
-  const b = touches[1]
-  if (!a || !b) return [0, 0]
-  return [(a.locationX + b.locationX) / 2, (a.locationY + b.locationY) / 2]
 }
 
 const styles = StyleSheet.create({

@@ -2,7 +2,7 @@
   "expo": {
     "name": "react-native-cosmos-gl",
     "slug": "react-native-cosmos-gl-example",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "orientation": "default",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#111318",

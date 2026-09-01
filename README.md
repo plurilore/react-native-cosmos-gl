@@ -12,16 +12,17 @@ performance numbers must name the device and workload.
 
 ```bash
 npm install react-native-cosmos-gl
-npx expo install expo-gl
+npx expo install expo-gl react-native-gesture-handler
 # Optional offscreen text rasterizer for inline labels:
 npx expo install @shopify/react-native-skia
 ```
 
-Requires React 19, React Native 0.86, Expo SDK 57 and Node 20 or newer. This is
-a new package with no installed base to carry, so the floors are what the code
+Requires React 19, React Native 0.86, Expo SDK 57,
+`react-native-gesture-handler` 2.32 or newer, and Node 20 or newer. This is a
+new package with no installed base to carry, so the floors are what the code
 needs rather than the oldest thing that might work.
 
-> **Pre-release.** The engine is covered by 275 tests against a mock WebGL2
+> **Pre-release.** The engine is covered by 288 tests against a mock WebGL2
 > context that parses each shader's real declarations, plus a shader gate that
 > compiles all 40 through the Khronos reference compiler. It now runs on
 > physical Android hardware; **iOS has not been exercised**, so Metal-backed
@@ -48,6 +49,7 @@ needs rather than the oldest thing that might work.
 
 ```tsx
 import { CosmosGraph } from 'react-native-cosmos-gl'
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 // Points: [x0, y0, x1, y1, …]. This array sets the index space
 // every other per-point array aligns to.
@@ -66,22 +68,29 @@ const links = new Float32Array([
 
 export default function App() {
   return (
-    <CosmosGraph
-      style={{ flex: 1 }}
-      pointPositions={pointPositions}
-      links={links}
-      simulationRepulsion={1.2}
-      simulationGravity={0.15}
-      curvedLinks
-      enableDrag
-      onPointClick={(index) => console.log('tapped', index)}
-    />
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <CosmosGraph
+        style={{ flex: 1 }}
+        pointPositions={pointPositions}
+        links={links}
+        simulationRepulsion={1.2}
+        simulationGravity={0.15}
+        curvedLinks
+        enableDrag
+        onPointClick={(index) => console.log('tapped', index)}
+      />
+    </GestureHandlerRootView>
   )
 }
 ```
 
-Pan, pinch-to-zoom, tap, long-press and point dragging work out of the box — no
-gesture library required.
+Pan, pinch-to-zoom, tap, long-press and point dragging are arbitrated by native
+gesture recognisers. Keep `GestureHandlerRootView` near the application root;
+all graphs below it share that native gesture host. A touch session that
+activates pan or pinch, or that ever contains more than one pointer, cannot
+dispatch a point, link or background tap/long-press callback. On Android, the
+terminal one-pointer sample emitted as a pinch ends is discarded so its changed
+focal point cannot shift the camera at release.
 
 ## Data model
 
@@ -285,9 +294,10 @@ knowing first:
 | `simulationCollision` | `0` | Overlap avoidance. `0` skips the grid entirely. |
 | `rescalePositions` | auto | Fits incoming coordinates to the space. |
 
-Callbacks (`onPointClick`, `onZoom`, `onSimulationTick`, …) receive a
-`CosmosPointerEvent` rather than a DOM event, produced identically from touch,
-pen and mouse.
+Pointer callbacks (`onPointClick`, `onLinkClick`, …) receive a platform-neutral
+`CosmosPointerEvent` rather than a DOM event. The built-in native gesture
+surface reports touch input; a custom `Graph` host can use the same event shape
+for pen or mouse input.
 
 ## Matching a graph drawn by Cosmograph
 
@@ -436,10 +446,14 @@ This is a port, not a wrapper. What changed, and why:
   layer instead — `Device`, `Texture`, `Framebuffer`, `Program`, `Model` — which
   caches GL and uniform state aggressively, because on React Native every call
   crosses a bridge.
-- **No runtime dependencies at all.** d3-color, d3-ease, d3-scale, d3-zoom and
-  gl-matrix are replaced by the narrow slices the engine actually uses.
-- **The engine does not own the frame loop or input.** d3-zoom and d3-drag bind
-  to DOM listeners; here the view transform is plain state that gestures drive.
+- **No general-purpose rendering or maths dependencies.** d3-color, d3-ease,
+  d3-scale, d3-zoom and gl-matrix are replaced by the narrow slices the engine
+  actually uses. `react-native-gesture-handler` is the required native input
+  peer for `<CosmosGraph />`.
+- **The core `Graph` owns neither the frame loop nor input.** d3-zoom and
+  d3-drag bind to DOM listeners; here the view transform is plain state that a
+  host drives. `<CosmosGraph />` supplies the standard React Native host: its
+  frame loop and native gesture recognisers call the JS-owned engine directly.
 - **`isnan()` is not used.** Several mobile drivers compile under relaxed
   floating-point assumptions and fold it to `false`. Since the engine treats NaN
   as *data*, the shaders use a bit-exact test instead — see
@@ -460,10 +474,12 @@ refuses GLSL outright and cosmos.gl has no WGSL — see
 cd example
 npm install
 npx expo run:ios     # or run:android
+npm run web          # Metro web development server
 ```
 
-Four datasets from 1.5k to 50k points, with selection, highlighting and live
-simulation controls.
+Four typed-array datasets from 1.5k to 50k points, plus a records/overlays
+screen and a device probe, with selection, highlighting and live simulation
+controls.
 
 ## Status
 
