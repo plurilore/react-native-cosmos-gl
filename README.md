@@ -10,6 +10,16 @@ the ordinary draw path does not copy the graph across the bridge. Practical
 capacity depends on the phone, graph density and forces enabled; publishable
 performance numbers must name the device and workload.
 
+## Performance demo
+
+This uncut physical-Android stress-lab capture exercises native pan and pinch,
+live labels, and GPU simulation/rendering across workloads up to 2,000 points
+and 6,000 links. The on-screen HUD reports frame timing for the captured device;
+it is evidence of that run, not a promise that every device will match it. The
+inline H.264 copy preserves 60 fps.
+
+https://github.com/user-attachments/assets/8dc13cc9-1dbd-469a-9a95-832a22981da0
+
 ```bash
 npm install react-native-cosmos-gl
 npx expo install expo-gl react-native-gesture-handler
