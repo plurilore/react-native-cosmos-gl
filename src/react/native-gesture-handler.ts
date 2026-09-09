@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MutableRefObject } from 'react'
+import { useLayoutEffect, useMemo, useState, type MutableRefObject } from 'react'
 import { Gesture, type ComposedGesture } from 'react-native-gesture-handler'
 
 import { GraphGestureCoordinator, type PanGestureSample } from './graph-gesture-coordinator'
@@ -85,7 +85,7 @@ export function useNativeGestureHandling (
   )
   const gesture = useMemo(() => createNativeGraphGesture(coordinator), [coordinator])
 
-  useEffect(() => () => coordinator.cancel(), [coordinator])
+  useLayoutEffect(() => () => coordinator.cancel(), [coordinator])
 
   return gesture
 }

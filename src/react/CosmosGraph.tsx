@@ -4,6 +4,7 @@ import React, {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -391,7 +392,17 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
   const unsubscribeInvalidateRef = useRef<(() => void) | undefined>(undefined)
   const unsubscribePerformanceRef = useRef<(() => void) | undefined>(undefined)
   const sizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 })
-  const [isReady, setIsReady] = useState(false)
+  const [readyGraph, setReadyGraph] = useState<Graph | undefined>(undefined)
+  const isReady = readyGraph !== undefined
+  const mountedRef = useRef(false)
+  const generationRef = useRef(0)
+  const [surfaceGeneration, setSurfaceGeneration] = useState(0)
+  const onReadyRef = useRef(onReady)
+  const onErrorRef = useRef(onError)
+  useLayoutEffect(() => {
+    onReadyRef.current = onReady
+    onErrorRef.current = onError
+  }, [onReady, onError])
   const onFramePerformanceSampleRef = useRef(onFramePerformanceSample)
   useEffect(() => {
     onFramePerformanceSampleRef.current = onFramePerformanceSample
@@ -510,72 +521,109 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
    * picture — and on a device sharing the GPU with an overlay, it costs that
    * overlay time too. So the loop stops, and `onInvalidate` restarts it.
    */
-  const renderFrame = useCallback(() => {
+  const renderFrame = useCallback(function renderCurrentFrame (generation: number, expectedGraph: Graph) {
     const graph = graphRef.current
     const gl = glRef.current
-    if (!graph || !gl) return
+    const isCurrent = () => mountedRef.current && generation === generationRef.current &&
+      graphRef.current === expectedGraph && !expectedGraph.destroyed
+    if (!isCurrent() || !graph || !gl) return
+    frameRef.current = undefined
 
-    graph.render([0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight])
-    // expo-gl batches commands and only presents on this call; without it the
-    // frame is computed and never shown.
-    const performanceObserver = onFramePerformanceSampleRef.current
-    if (!performanceObserver) {
-      gl.endFrameEXP()
-    } else {
-      const presentStartedAt = now()
-      gl.endFrameEXP()
-      const presentMs = now() - presentStartedAt
-      const coreSample = graph.getLastPerformanceSample()
-      if (coreSample) {
-        performanceObserver({
-          ...coreSample,
-          presentMs,
-          totalHostMs: coreSample.frameCpuMs + presentMs,
-        })
+    try {
+      graph.render([0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight])
+      // A frame observer may synchronously remove the surface.
+      if (!isCurrent()) return
+      // expo-gl batches commands and only presents on this call.
+      const performanceObserver = onFramePerformanceSampleRef.current
+      if (!performanceObserver) {
+        gl.endFrameEXP()
+      } else {
+        const presentStartedAt = now()
+        gl.endFrameEXP()
+        const presentMs = now() - presentStartedAt
+        const coreSample = graph.getLastPerformanceSample()
+        if (coreSample) {
+          performanceObserver({
+            ...coreSample,
+            presentMs,
+            totalHostMs: coreSample.frameCpuMs + presentMs,
+          })
+        }
       }
+    } catch (error) {
+      if (isCurrent()) onErrorRef.current?.(error instanceof Error ? error : new Error(String(error)))
+      return
     }
 
-    if (graph.needsFrame) {
-      frameRef.current = requestAnimationFrame(renderFrame)
-    } else {
-      frameRef.current = undefined
+    if (isCurrent() && graph.needsFrame && frameRef.current === undefined) {
+      frameRef.current = requestAnimationFrame(() => renderCurrentFrame(generation, graph))
     }
   }, [])
 
   /** Starts the loop if it is not already running. */
   const scheduleFrame = useCallback(() => {
-    if (frameRef.current !== undefined) return
-    frameRef.current = requestAnimationFrame(renderFrame)
+    const graph = graphRef.current
+    if (!mountedRef.current || !graph || graph.destroyed || frameRef.current !== undefined) return
+    const generation = generationRef.current
+    frameRef.current = requestAnimationFrame(() => renderFrame(generation, graph))
   }, [renderFrame])
 
+  const releaseGraph = useCallback(() => {
+    unsubscribeInvalidateRef.current?.()
+    unsubscribeInvalidateRef.current = undefined
+    unsubscribePerformanceRef.current?.()
+    unsubscribePerformanceRef.current = undefined
+    if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current)
+    frameRef.current = undefined
+    const graph = graphRef.current
+    // Revoke access before releasing any GL resources, including if a driver
+    // rejects deletion after an unexpected native context loss.
+    graphRef.current = undefined
+    glRef.current = undefined
+    gesturesRef.current = undefined
+    graph?.destroy()
+  }, [])
+
+  useLayoutEffect(() => {
+    mountedRef.current = true
+    // StrictMode/Offscreen can replay effects while preserving hook state.
+    // The previous graph has been destroyed: request a fresh native surface,
+    // and reject its old callback even before this state update commits.
+    setSurfaceGeneration(generationRef.current)
+    return () => {
+      mountedRef.current = false
+      generationRef.current += 1
+      releaseGraph()
+    }
+  }, [releaseGraph])
+
   const onContextCreate = useCallback((gl: ExpoWebGLRenderingContext) => {
+    if (!mountedRef.current || surfaceGeneration !== generationRef.current || glRef.current === gl) return
     try {
+      releaseGraph()
       const graph = new Graph(gl, { ...configRef.current, pixelRatio })
       graphRef.current = graph
       glRef.current = gl
       gesturesRef.current = new GestureController(graph)
+      writtenConfigRef.current.clear()
 
       const { width, height } = sizeRef.current
       if (width && height) graph.setSize(width, height)
 
-      // Wake the loop whenever the engine goes dirty while it is stopped.
-      unsubscribeInvalidateRef.current?.()
       unsubscribeInvalidateRef.current = graph.onInvalidate(scheduleFrame)
-
-      setIsReady(true)
-      onReady?.(graph)
+      setReadyGraph(graph)
+      onReadyRef.current?.(graph)
       scheduleFrame()
     } catch (error) {
-      onError?.(error instanceof Error ? error : new Error(String(error)))
+      if (mountedRef.current && surfaceGeneration === generationRef.current) {
+        onErrorRef.current?.(error instanceof Error ? error : new Error(String(error)))
+      }
     }
-    // `onReady` and `onError` are deliberately not dependencies: they are read
-    // at call time, and re-creating the GL context because a parent passed a
-    // new closure would destroy and rebuild the whole graph.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pixelRatio, renderFrame, scheduleFrame])
+  }, [pixelRatio, releaseGraph, scheduleFrame, surfaceGeneration])
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout
+    if (!mountedRef.current) return
     sizeRef.current = { width, height }
     graphRef.current?.setSize(width, height)
   }, [])
@@ -595,77 +643,77 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     if (!isReady || !effectivePointPositions) return
     graphRef.current?.setPointPositions(effectivePointPositions)
     graphRef.current?.start(restartAlphaRef.current)
-  }, [isReady, effectivePointPositions])
+  }, [isReady, readyGraph, effectivePointPositions])
 
   useEffect(() => {
     if (!isReady || !effectiveLinks) return
     graphRef.current?.setLinks(effectiveLinks)
-  }, [isReady, effectiveLinks])
+  }, [isReady, readyGraph, effectiveLinks])
 
   useEffect(() => {
     if (!isReady || !effectivePointColors) return
     graphRef.current?.setPointColors(effectivePointColors)
-  }, [isReady, effectivePointColors])
+  }, [isReady, readyGraph, effectivePointColors])
 
   useEffect(() => {
     if (!isReady || !effectivePointSizes) return
     graphRef.current?.setPointSizes(effectivePointSizes)
-  }, [isReady, effectivePointSizes])
+  }, [isReady, readyGraph, effectivePointSizes])
 
   useEffect(() => {
     if (!isReady || !effectivePointShapes) return
     graphRef.current?.setPointShapes(effectivePointShapes)
-  }, [isReady, effectivePointShapes])
+  }, [isReady, readyGraph, effectivePointShapes])
 
   useEffect(() => {
     if (!isReady || !pointImages) return
     graphRef.current?.setPointImages(pointImages.images, pointImages.indices, pointImages.sizes)
-  }, [isReady, pointImages])
+  }, [isReady, readyGraph, pointImages])
 
   useEffect(() => {
     if (!isReady || !effectiveLinkColors) return
     graphRef.current?.setLinkColors(effectiveLinkColors)
-  }, [isReady, effectiveLinkColors])
+  }, [isReady, readyGraph, effectiveLinkColors])
 
   useEffect(() => {
     if (!isReady || !effectiveLinkWidths) return
     graphRef.current?.setLinkWidths(effectiveLinkWidths)
-  }, [isReady, effectiveLinkWidths])
+  }, [isReady, readyGraph, effectiveLinkWidths])
 
   useEffect(() => {
     if (!isReady || !linkStyles) return
     graphRef.current?.setLinkStyles(linkStyles)
-  }, [isReady, linkStyles])
+  }, [isReady, readyGraph, linkStyles])
 
   useEffect(() => {
     if (!isReady || !linkArrows) return
     graphRef.current?.setLinkArrows(linkArrows)
-  }, [isReady, linkArrows])
+  }, [isReady, readyGraph, linkArrows])
 
   useEffect(() => {
     if (!isReady || !effectiveLinkStrength) return
     graphRef.current?.setLinkStrength(effectiveLinkStrength)
-  }, [isReady, effectiveLinkStrength])
+  }, [isReady, readyGraph, effectiveLinkStrength])
 
   useEffect(() => {
     if (!isReady || !pinnedPoints) return
     graphRef.current?.setPinnedPoints(pinnedPoints)
-  }, [isReady, pinnedPoints])
+  }, [isReady, readyGraph, pinnedPoints])
 
   useEffect(() => {
     if (!isReady || !effectivePointClusters) return
     graphRef.current?.setPointClusters(effectivePointClusters)
-  }, [isReady, effectivePointClusters])
+  }, [isReady, readyGraph, effectivePointClusters])
 
   useEffect(() => {
     if (!isReady || !effectiveClusterPositions) return
     graphRef.current?.setClusterPositions(effectiveClusterPositions)
-  }, [isReady, effectiveClusterPositions])
+  }, [isReady, readyGraph, effectiveClusterPositions])
 
   useEffect(() => {
     if (!isReady || !effectivePointClusterStrength) return
     graphRef.current?.setPointClusterStrength(effectivePointClusterStrength)
-  }, [isReady, effectivePointClusterStrength])
+  }, [isReady, readyGraph, effectivePointClusterStrength])
 
   // Config changes go through the partial setter, so properties this component
   // does not own — anything set imperatively through the ref — survive.
@@ -685,7 +733,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     // `onDataResolved` is read at call time; a parent passing a new closure
     // must not re-announce data that has not changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isReady, resolved])
+  }, [isReady, readyGraph, resolved])
 
   const measuresFramePerformance = onFramePerformanceSample !== undefined
   useEffect(() => {
@@ -698,18 +746,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
       unsubscribePerformanceRef.current?.()
       unsubscribePerformanceRef.current = undefined
     }
-  }, [isReady, measuresFramePerformance])
-
-  useEffect(() => () => {
-    unsubscribeInvalidateRef.current?.()
-    unsubscribeInvalidateRef.current = undefined
-    unsubscribePerformanceRef.current?.()
-    unsubscribePerformanceRef.current = undefined
-    if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current)
-    graphRef.current?.destroy()
-    graphRef.current = undefined
-    glRef.current = undefined
-  }, [])
+  }, [isReady, readyGraph, measuresFramePerformance])
 
   useImperativeHandle(ref, (): CosmosGraphRef => ({
     getGraph: () => graphRef.current,
@@ -813,7 +850,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
     selectionConfig.highlightedPointIndices ?? config.highlightedPointIndices
 
   const contextValue = useMemo((): CosmosGraphContextValue => ({
-    graph: graphRef.current,
+    graph: readyGraph,
     resolved,
     isReady,
     selectedPointIndices: effectiveSelectedPointIndices,
@@ -831,7 +868,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
       onSelectionChangeRef.current?.(undefined, undefined)
     },
     searchPoints: (query, limit = 20) => searchPoints(resolvedRef.current, query, limit),
-  }), [resolved, isReady, effectiveSelectedPointIndices])
+  }), [resolved, isReady, readyGraph, effectiveSelectedPointIndices])
 
   return (
     <View style={[styles.container, style]} onLayout={onLayout}>
@@ -840,7 +877,7 @@ export const CosmosGraph = forwardRef<CosmosGraphRef, CosmosGraphProps>(function
           must not also pan the graph underneath it. */}
       <GestureDetector gesture={touchGesture}>
         <View collapsable={false} style={StyleSheet.absoluteFill}>
-          <GLView style={StyleSheet.absoluteFill} msaaSamples={msaaSamples} onContextCreate={onContextCreate} />
+          <GLView key={surfaceGeneration} style={StyleSheet.absoluteFill} msaaSamples={msaaSamples} onContextCreate={onContextCreate} />
         </View>
       </GestureDetector>
       {children ? (

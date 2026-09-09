@@ -15,6 +15,7 @@ export class LabelRefreshScheduler<TReason = LabelRefreshReason> {
   private timeout: ReturnType<typeof setTimeout> | undefined
   private lastRefresh = -Infinity
   private pendingReason: TReason | undefined
+  private disposed = false
 
   public constructor (
     refresh: (reason: TReason) => void,
@@ -27,6 +28,7 @@ export class LabelRefreshScheduler<TReason = LabelRefreshReason> {
   }
 
   public request (reason: TReason, immediate = false): void {
+    if (this.disposed) return
     this.pendingReason = reason
     if (this.timeout !== undefined) {
       if (!immediate) return
@@ -39,8 +41,14 @@ export class LabelRefreshScheduler<TReason = LabelRefreshReason> {
       this.lastRefresh = this.clock()
       const pending = this.pendingReason
       this.pendingReason = undefined
-      if (pending !== undefined) this.refresh(pending)
+      if (!this.disposed && pending !== undefined) this.refresh(pending)
     }, delay)
+  }
+
+  /** Permanently releases this subscription's work, including stale requests. */
+  public dispose (): void {
+    this.disposed = true
+    this.cancel()
   }
 
   public cancel (): void {

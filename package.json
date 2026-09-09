@@ -1,6 +1,6 @@
 {
   "name": "react-native-cosmos-gl",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "GPU-accelerated force graph for React Native. A port of cosmos.gl to iOS, Android and the web.",
   "keywords": [
     "react-native",
@@ -44,7 +44,7 @@
   "scripts": {
     "build": "bob build",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --max-warnings 17",
+    "lint": "eslint src --max-warnings 8",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf lib",
@@ -75,6 +75,7 @@
     "@shopify/react-native-skia": "2.6.2",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
+    "@types/react-test-renderer": "19.1.0",
     "d3-force": "^3.0.0",
     "eslint": "^10.9.1",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -83,6 +84,7 @@
     "react-native": "0.86.3",
     "react-native-builder-bob": "^0.43.0",
     "react-native-gesture-handler": "^2.32.0",
+    "react-test-renderer": "19.2.8",
     "tsx": "^4.23.13",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.68.0",
