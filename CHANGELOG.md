@@ -9,6 +9,26 @@ release that stabilizes the API will say so here.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-09
+
+### Fixed
+
+- Rapid navigation away from a graph no longer lets queued context callbacks,
+  animation frames, or label refreshes use a removed native GL surface. Renderer
+  and label resources are released during layout cleanup before native removal.
+- React StrictMode effect replay creates a fresh GL surface and reapplies graph
+  data. Callbacks belonging to an earlier surface cannot initialize its successor.
+- Destroying a graph inside transition, zoom, or simulation callbacks stops the
+  current frame before further GPU work. Retained graph references cannot restart
+  label readbacks or frame subscriptions after destruction.
+- Deferred context creation uses the current `onReady` and `onError` callbacks.
+
+### Added
+
+- Read-only `Graph.destroyed` state for integrations that retain graph references.
+- `LabelRefreshScheduler.dispose()` permanently cancels queued refreshes and
+  rejects further requests; `cancel()` remains reusable.
+
 ## [0.1.1] - 2026-09-01
 
 ### Changed
@@ -88,6 +108,7 @@ the bridge to be drawn.
 
 - Point image atlas drawing.
 
-[Unreleased]: https://github.com/plurilore/react-native-cosmos-gl/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/plurilore/react-native-cosmos-gl/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/plurilore/react-native-cosmos-gl/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/plurilore/react-native-cosmos-gl/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/plurilore/react-native-cosmos-gl/releases/tag/v0.1.0

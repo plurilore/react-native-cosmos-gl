@@ -149,6 +149,11 @@ export class Graph {
     this.clusters = new Clusters(this.device, this.config, this.store, this.data, this.points)
   }
 
+  /** True once teardown starts; retained references must not issue GL work. */
+  public get destroyed (): boolean {
+    return this.isDestroyed
+  }
+
   public get isSimulationRunning (): boolean {
     return this.store.isSimulationRunning
   }
@@ -346,16 +351,21 @@ export class Graph {
     }
 
     if (this.isDataUpdateNeeded) this.applyDataUpdates()
+    if (this.isDestroyed) return
 
     const now = currentTime()
     if (this.transition.isPending) this.transition.start(now)
+    if (this.isDestroyed) return
     if (this.transition.isActive) {
       this.transition.step(now)
+      if (this.isDestroyed) return
       this.applyTransitionProgress()
     }
     this.zoomInstance.step(now)
+    if (this.isDestroyed) return
 
     this.runSimulationStep()
+    if (this.isDestroyed) return
     const [, , bufferWidth, bufferHeight] = viewport
     this.device.setViewport(0, 0, bufferWidth, bufferHeight)
     this.clearBackground()
@@ -430,6 +440,13 @@ export class Graph {
   public destroy (): void {
     if (this.isDestroyed) return
     this.isDestroyed = true
+    this.store.isSimulationRunning = false
+    this.zoomInstance.stopAnimation()
+    this.transition.abort()
+    this.viewTransformListeners.clear()
+    this.invalidateListeners.clear()
+    this.frameListeners.clear()
+    this.performanceListeners.clear()
     if (this.fitViewTimeout !== undefined) clearTimeout(this.fitViewTimeout)
     this.forceGravity?.destroy()
     this.forceCenter?.destroy()
@@ -846,7 +863,7 @@ export class Graph {
    */
   private runSimulationStep (forceExecution = false): void {
     const { config, store, points } = this
-    if (!config.enableSimulation || !points) return
+    if (this.isDestroyed || !config.enableSimulation || !points) return
 
     if (this.isRepulsionFromPointerActive && config.enableRightClickRepulsion) {
       points.swapFbo()
@@ -920,6 +937,7 @@ export class Graph {
     store.simulationProgress = Math.sqrt(Math.min(1, ALPHA_MIN / store.alpha))
 
     config.onSimulationTick?.(store.alpha, store.hoveredPoint?.index, store.hoveredPoint?.position)
+    if (this.isDestroyed) return
 
     if (store.alpha <= ALPHA_MIN && store.isSimulationRunning) this.stop()
   }
@@ -929,11 +947,13 @@ export class Graph {
    * label placement. Pass `undefined` to stop tracking.
    */
   public trackPointsByIndices (indices?: number[]): void {
+    if (this.isDestroyed) return
     this.points?.trackPointsByIndices(indices)
   }
 
   /** Tracked point positions in simulation space, by point index. */
   public getTrackedPointPositionsMap (): Map<number, [number, number]> {
+    if (this.isDestroyed) return new Map()
     return this.points?.getTrackedPositionsMap() ?? new Map()
   }
 
@@ -944,31 +964,35 @@ export class Graph {
    * The gather runs here, when the caller actually needs a collision snapshot.
    */
   public getPointPositionsByIndices (indices: readonly number[]): Map<number, [number, number]> {
-    if (!this.points || indices.length === 0) return new Map()
+    if (this.isDestroyed || !this.points || indices.length === 0) return new Map()
     this.points.trackPointsByIndices([...indices])
     return this.points.getTrackedPositionsMap()
   }
 
   /** Creates or replaces the persistent single-channel inline-label atlas. */
   public setLabelAtlas (data: LabelAtlasData): void {
+    if (this.isDestroyed) return
     this.labels?.setAtlas(data)
     this.invalidate()
   }
 
   /** Uploads newly rasterized rectangles without replacing the atlas. */
   public updateLabelAtlas (patches: LabelAtlasPatch | readonly LabelAtlasPatch[]): void {
+    if (this.isDestroyed) return
     this.labels?.updateAtlas(patches)
     this.invalidate()
   }
 
   /** Replaces the visible inline-label instances. Equal object identity is a no-op. */
   public setLabels (data: LabelDrawData): void {
+    if (this.isDestroyed) return
     this.labels?.setLabels(data)
     this.invalidate()
   }
 
   /** Stops drawing inline labels while retaining the atlas for later reuse. */
   public clearLabels (): void {
+    if (this.isDestroyed) return
     this.labels?.clear()
     this.invalidate()
   }
@@ -987,6 +1011,7 @@ export class Graph {
    * rather than by the size of the graph.
    */
   public sampleVisiblePointIndices (distance = this.config.pointSamplingDistance): Map<number, [number, number]> {
+    if (this.isDestroyed) return new Map()
     return this.points?.sampleVisiblePoints(distance) ?? new Map()
   }
 
@@ -1031,6 +1056,7 @@ export class Graph {
    * state would re-render the graph on every frame of a pan.
    */
   public onViewTransform (listener: (transform: ViewProjection) => void): () => void {
+    if (this.isDestroyed) return () => {}
     this.viewTransformListeners.add(listener)
     return () => {
       this.viewTransformListeners.delete(listener)
@@ -1039,6 +1065,7 @@ export class Graph {
 
   /** Notifies view-transform listeners. Called by the zoom instance. */
   public emitViewTransform (): void {
+    if (this.isDestroyed) return
     this.invalidate()
     if (this.viewTransformListeners.size === 0) return
     const transform = this.getViewProjection()
@@ -1056,6 +1083,7 @@ export class Graph {
    * inefficiency — so the host can ask before it schedules.
    */
   public get needsFrame (): boolean {
+    if (this.isDestroyed) return false
     return (
       this.isFrameNeeded ||
       this.isDataUpdateNeeded ||
@@ -1077,6 +1105,7 @@ export class Graph {
    * top that shares the surface.
    */
   public invalidate (): void {
+    if (this.isDestroyed) return
     this.isFrameNeeded = true
     for (const listener of this.invalidateListeners) listener()
   }
@@ -1089,6 +1118,7 @@ export class Graph {
    * waking again; polling for that would be the loop it just stopped.
    */
   public onInvalidate (listener: () => void): () => void {
+    if (this.isDestroyed) return () => {}
     this.invalidateListeners.add(listener)
     return () => {
       this.invalidateListeners.delete(listener)
@@ -1105,6 +1135,7 @@ export class Graph {
    * would both mismeasure and defeat the scheduling this pairs with.
    */
   public onFrame (listener: (now: number) => void): () => void {
+    if (this.isDestroyed) return () => {}
     this.frameListeners.add(listener)
     return () => {
       this.frameListeners.delete(listener)
@@ -1113,6 +1144,7 @@ export class Graph {
 
   /** Subscribes to optional host-side GL counters. Disabled when nobody listens. */
   public onPerformanceSample (listener: (sample: FramePerformanceSample) => void): () => void {
+    if (this.isDestroyed) return () => {}
     const stopRecording = this.device.enablePerformanceCounters()
     if (this.performanceListeners.size === 0) {
       this.previousPerformanceCounters = this.device.getPerformanceCounters()

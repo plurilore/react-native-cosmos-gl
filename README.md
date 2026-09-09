@@ -32,7 +32,7 @@ Requires React 19, React Native 0.86, Expo SDK 57,
 new package with no installed base to carry, so the floors are what the code
 needs rather than the oldest thing that might work.
 
-> **Pre-release.** The engine is covered by 288 tests against a mock WebGL2
+> **Pre-release.** The engine is covered by 303 tests against a mock WebGL2
 > context that parses each shader's real declarations, plus a shader gate that
 > compiles all 40 through the Khronos reference compiler. It now runs on
 > physical Android hardware; **iOS has not been exercised**, so Metal-backed

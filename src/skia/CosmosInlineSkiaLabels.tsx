@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { PixelRatio } from 'react-native'
 import { useFont, type SkFont } from '@shopify/react-native-skia'
 import { getRgbaColor } from '../core/color'
@@ -114,7 +114,7 @@ export function CosmosInlineSkiaLabels ({
   )
   const buffers = useMemo(() => createLabelLayoutBuffers(labelCapacity), [labelCapacity])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     dataGenerationRef.current += 1
     selectionCacheRef.current = undefined
     lastLayoutHashRef.current = ''
@@ -129,8 +129,8 @@ export function CosmosInlineSkiaLabels ({
     rankedRef.current = indices
   }, [resolved])
 
-  useEffect(() => {
-    if (!graph || !isReady || !font) return
+  useLayoutEffect(() => {
+    if (!graph || graph.destroyed || !isReady || !font) return
     configureFont(font)
     manager.reset()
     lastDrawHashRef.current = ''
@@ -141,6 +141,8 @@ export function CosmosInlineSkiaLabels ({
     cacheRef.current = new LabelAtlasCache(size, size)
     graph.setLabelAtlas({ width: size, height: size, format: 'r8unorm' })
     return () => {
+      cacheRef.current = undefined
+      if (graph.destroyed) return
       graph.clearLabels()
       graph.trackPointsByIndices(undefined)
     }
@@ -158,12 +160,12 @@ export function CosmosInlineSkiaLabels ({
   }, [font, metrics])
 
   useEffect(() => {
-    if (!graph || !onPerformanceSample) return
+    if (!graph || graph.destroyed || !onPerformanceSample) return
     return graph.device.enablePerformanceCounters()
   }, [graph, onPerformanceSample])
 
   const refresh = useCallback((reason: LabelPerformanceSample['reason']) => {
-    if (!graph || !isReady || !font) return
+    if (!graph || graph.destroyed || !isReady || !font) return
     const cache = cacheRef.current
     if (!cache) return
 
@@ -362,8 +364,8 @@ export function CosmosInlineSkiaLabels ({
     labelCapacity, onMeasure, onPerformanceSample,
   ])
 
-  useEffect(() => {
-    if (!graph || !isReady || !font) return
+  useLayoutEffect(() => {
+    if (!graph || graph.destroyed || !isReady || !font) return
     let wasRunning = graph.isSimulationRunning
     const scheduler = new LabelRefreshScheduler(refresh, updateIntervalMs, currentTime)
 
@@ -383,7 +385,7 @@ export function CosmosInlineSkiaLabels ({
     return () => {
       stopFrames()
       stopView()
-      scheduler.cancel()
+      scheduler.dispose()
     }
   }, [graph, isReady, font, refresh, updateIntervalMs])
 
